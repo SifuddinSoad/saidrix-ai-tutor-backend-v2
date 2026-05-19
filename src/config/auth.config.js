@@ -22,7 +22,7 @@ function resolveSecret(name) {
 
   if (IS_PROD) {
     throw new Error(
-      `[auth.config] ${name} is required and must be >= ${MIN_SECRET_LEN} chars in production`
+      `[auth.config] ${name} is required and must be >= ${MIN_SECRET_LEN} chars in production`,
     );
   }
 
@@ -30,7 +30,7 @@ function resolveSecret(name) {
   // a restart; that is acceptable and intentional for local dev).
   logger.warn(
     `[auth.config] ${name} missing/weak — using an ephemeral dev secret. ` +
-      `Set a strong ${name} (>= ${MIN_SECRET_LEN} chars) for production.`
+      `Set a strong ${name} (>= ${MIN_SECRET_LEN} chars) for production.`,
   );
   return crypto.randomBytes(48).toString("hex");
 }
@@ -87,7 +87,7 @@ export const authConfig = {
     path: "/api/auth",
     domain: process.env.COOKIE_DOMAIN || undefined,
     secure: IS_PROD,
-    sameSite: "strict",
+    sameSite: "lax",
   },
 
   // The 4 user tiers. `free_trial` is the only one that grants access today;
