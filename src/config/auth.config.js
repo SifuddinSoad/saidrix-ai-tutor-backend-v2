@@ -87,7 +87,7 @@ export const authConfig = {
     path: "/api/auth",
     domain: process.env.COOKIE_DOMAIN || undefined,
     secure: IS_PROD,
-    sameSite: "strict",
+    sameSite: "lax",
   },
 
   // The 4 user tiers. `free_trial` is the only one that grants access today;
