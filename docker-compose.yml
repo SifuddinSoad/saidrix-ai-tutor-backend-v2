@@ -1,0 +1,24 @@
+# ===========================================
+# LiveKit Self-Host Stack
+# Run: docker compose up -d
+# ===========================================
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    ports:
+      - "7880:7880"        # HTTP/WebSocket signaling
+      - "7881:7881"        # TCP fallback
+      - "7882:7882/udp"    # WebRTC media (UDP)
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"

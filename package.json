@@ -1,0 +1,44 @@
+{
+  "name": "saidrix-ai-tutor-server",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "start:voice": "node src/agents/voice-tutor/worker.js dev",
+    "test": "node --test \"tests/**/*.test.js\"",
+    "test:auth": "node --test tests/auth/auth.test.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.1.45",
+    "@langchain/langgraph": "^1.3.0",
+    "@langchain/openai": "^1.4.5",
+    "@livekit/agents": "^1.4.0",
+    "@livekit/agents-plugin-deepgram": "^1.4.0",
+    "@livekit/agents-plugin-silero": "^1.4.0",
+    "@livekit/rtc-node": "^0.13.27",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "deepagents": "^1.10.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "langchain": "^1.4.0",
+    "livekit-server-sdk": "^2.15.2",
+    "mongoose": "^9.6.2",
+    "nodemailer": "^6.9.16",
+    "rate-limit-mongo": "^2.3.2",
+    "ws": "^8.20.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
