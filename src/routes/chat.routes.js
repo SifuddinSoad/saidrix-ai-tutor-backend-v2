@@ -13,9 +13,23 @@ import {
   BadRequestError,
   NotFoundError,
 } from "../errors/index.js";
+import { authenticate } from "../middleware/authenticate.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
+
+// Every chat endpoint is per-user: identity comes from the access token.
+router.use(authenticate);
+
+// Load a session and assert it belongs to the caller (404 if missing OR
+// not owned — don't leak existence of other users' sessions).
+async function ownedSession(sessionId, userId) {
+  const session = await Session.findOne({ sessionId });
+  if (!session || session.userId !== userId) {
+    throw new NotFoundError("Session not found");
+  }
+  return session;
+}
 
 // --- helper: clamp pagination query ---
 function paginate(query, defLimit = 20) {
@@ -32,7 +46,7 @@ function paginate(query, defLimit = 20) {
 router.get(
   "/sessions",
   asyncHandler(async (req, res) => {
-    const { userId = "default" } = req.query;
+    const userId = req.user.userId;
     const { page, limit, skip } = paginate(req.query);
 
     const [sessions, total] = await Promise.all([
@@ -55,15 +69,11 @@ router.get(
 router.get(
   "/sessions/:sessionId",
   asyncHandler(async (req, res) => {
-    const session = await Session.findOne({
-      sessionId: req.params.sessionId,
-    }).lean();
-
-    if (!session) {
-      throw new NotFoundError("Session not found");
-    }
-
-    res.json({ session });
+    const session = await ownedSession(
+      req.params.sessionId,
+      req.user.userId
+    );
+    res.json({ session: session.toObject() });
   })
 );
 
@@ -71,11 +81,8 @@ router.get(
 router.post(
   "/sessions",
   asyncHandler(async (req, res) => {
-    const {
-      userId = "default",
-      title = "New Chat",
-      metadata = {},
-    } = req.body || {};
+    const { title = "New Chat", metadata = {} } = req.body || {};
+    const userId = req.user.userId;
 
     const sessionId = randomUUID();
 
@@ -104,10 +111,7 @@ router.patch(
       );
     }
 
-    const existing = await Session.findOne({ sessionId });
-    if (!existing) {
-      throw new NotFoundError("Session not found");
-    }
+    const existing = await ownedSession(sessionId, req.user.userId);
 
     if (typeof title === "string") {
       const trimmed = title.trim();
@@ -128,6 +132,7 @@ router.delete(
   "/sessions/:sessionId",
   asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
+    await ownedSession(sessionId, req.user.userId);
 
     await Promise.all([
       Session.deleteOne({ sessionId }),
@@ -149,6 +154,7 @@ router.get(
   "/sessions/:sessionId/messages",
   asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
+    await ownedSession(sessionId, req.user.userId);
     const { page, limit, skip } = paginate(req.query, 50);
 
     const [messages, total] = await Promise.all([
@@ -172,6 +178,7 @@ router.patch(
   "/sessions/:sessionId/messages/:messageId/answer-prompt",
   asyncHandler(async (req, res) => {
     const { sessionId, messageId } = req.params;
+    await ownedSession(sessionId, req.user.userId);
     const { promptId, selectedAnswers } = req.body || {};
 
     if (
@@ -209,6 +216,7 @@ router.patch(
   "/sessions/:sessionId/messages/:messageId/proposal-created",
   asyncHandler(async (req, res) => {
     const { sessionId, messageId } = req.params;
+    await ownedSession(sessionId, req.user.userId);
     const { courseId } = req.body || {};
 
     if (!courseId) {
@@ -242,6 +250,7 @@ router.get(
   "/sessions/:sessionId/tool-calls",
   asyncHandler(async (req, res) => {
     const { sessionId } = req.params;
+    await ownedSession(sessionId, req.user.userId);
     const { page, limit, skip } = paginate(req.query, 100);
 
     const [toolCalls, total] = await Promise.all([

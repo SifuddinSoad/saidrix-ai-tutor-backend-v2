@@ -7,14 +7,24 @@ import { Router } from "express";
 import { randomUUID } from "crypto";
 import Course from "../db/models/Course.js";
 import KnowledgeDoc from "../db/models/KnowledgeDoc.js";
+import LectureCompletion from "../db/models/LectureCompletion.js";
 import {
   asyncHandler,
   BadRequestError,
   NotFoundError,
 } from "../errors/index.js";
+import {
+  countTopics,
+  progressPercent,
+  courseTag,
+} from "../utils/courseProgress.js";
+import { authenticate } from "../middleware/authenticate.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
+
+// Courses + knowledge are per-user; identity comes from the access token.
+router.use(authenticate);
 
 // --- helper: clamp pagination query ---
 function paginate(query) {
@@ -31,11 +41,10 @@ function paginate(query) {
 router.get(
   "/courses",
   asyncHandler(async (req, res) => {
-    const { userId, subject } = req.query;
+    const { subject } = req.query;
     const { page, limit, skip } = paginate(req.query);
 
-    const filter = {};
-    if (userId) filter.userId = userId;
+    const filter = { userId: req.user.userId };
     if (subject) filter.subject = subject;
 
     const [courses, total] = await Promise.all([
@@ -47,8 +56,26 @@ router.get(
       Course.countDocuments(filter),
     ]);
 
+    // Enrich each course with completion progress for list/cards.
+    const enriched = await Promise.all(
+      courses.map(async (c) => {
+        const totalTopics = countTopics(c);
+        const completed = await LectureCompletion.countDocuments({
+          userId: req.user.userId,
+          courseId: c.courseId,
+        });
+        return {
+          ...c,
+          tag: courseTag(c.course_title),
+          lessons: totalTopics,
+          progress: progressPercent(completed, totalTopics),
+          locked: false,
+        };
+      })
+    );
+
     res.json({
-      courses,
+      courses: enriched,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   })
@@ -62,11 +89,29 @@ router.get(
       courseId: req.params.courseId,
     }).lean();
 
-    if (!course) {
+    if (!course || course.userId !== req.user.userId) {
       throw new NotFoundError("Course not found");
     }
 
-    res.json({ course });
+    const completions = await LectureCompletion.find({
+      userId: req.user.userId,
+      courseId: course.courseId,
+    })
+      .select("location -_id")
+      .lean();
+
+    const totalTopics = countTopics(course);
+    const completedLocations = completions.map((c) => c.location);
+
+    res.json({
+      course: {
+        ...course,
+        tag: courseTag(course.course_title),
+        lessons: totalTopics,
+        progress: progressPercent(completedLocations.length, totalTopics),
+        completedLocations,
+      },
+    });
   })
 );
 
@@ -76,6 +121,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const result = await Course.deleteOne({
       courseId: req.params.courseId,
+      userId: req.user.userId,
     });
 
     if (result.deletedCount === 0) {

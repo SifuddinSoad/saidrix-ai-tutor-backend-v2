@@ -15,6 +15,8 @@ import voiceRoutes from "./routes/voice.routes.js";
 import enrichmentRoutes from "./routes/enrichment.routes.js";
 import projectRoutes from "./routes/project.routes.js";
 import routineRoutes from "./routes/routine.routes.js";
+import dashboardRoutes from "./routes/dashboard.routes.js";
+import progressRoutes from "./routes/progress.routes.js";
 import authRoutes from "./routes/auth.routes.js";
 import { notFoundHandler, errorHandler } from "./errors/index.js";
 
@@ -73,6 +75,8 @@ app.use("/api/voice", voiceRoutes);
 app.use("/api/enrichment", enrichmentRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/routines", routineRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/progress", progressRoutes);
 
 // --- 404 + central error handler (must be last) ---
 

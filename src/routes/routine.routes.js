@@ -19,9 +19,13 @@ import {
   BadRequestError,
   NotFoundError,
 } from "../errors/index.js";
+import { authenticate } from "../middleware/authenticate.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
+
+// Routines are per-user; identity comes from the access token.
+router.use(authenticate);
 
 function paginate(query) {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -37,9 +41,9 @@ router.post(
       courseIds,
       dailyHours = 1,
       startDate,
-      userId = "default",
       sessionId = null,
     } = req.body || {};
+    const userId = req.user.userId;
 
     const ids = Array.isArray(courseIds)
       ? courseIds
@@ -61,7 +65,10 @@ router.post(
       throw new BadRequestError("Invalid startDate");
     }
 
-    const found = await Course.countDocuments({ courseId: { $in: ids } });
+    const found = await Course.countDocuments({
+      courseId: { $in: ids },
+      userId,
+    });
     if (found === 0) {
       throw new NotFoundError("No matching courses found");
     }
@@ -88,11 +95,9 @@ router.post(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { userId } = req.query;
     const { page, limit, skip } = paginate(req.query);
 
-    const filter = {};
-    if (userId) filter.userId = userId;
+    const filter = { userId: req.user.userId };
 
     const [routines, total] = await Promise.all([
       Routine.find(filter)
@@ -118,7 +123,7 @@ router.get(
       routineId: req.params.routineId,
     }).lean();
 
-    if (!routine) {
+    if (!routine || routine.userId !== req.user.userId) {
       throw new NotFoundError("Routine not found");
     }
 
@@ -132,6 +137,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const result = await Routine.deleteOne({
       routineId: req.params.routineId,
+      userId: req.user.userId,
     });
 
     if (result.deletedCount === 0) {

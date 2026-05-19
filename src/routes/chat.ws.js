@@ -8,6 +8,7 @@ import { WebSocketServer } from "ws";
 import { randomUUID } from "crypto";
 import { invokeChatAgent } from "../agents/chat/graph.js";
 import Session from "../db/models/Session.js";
+import { verifyAccessToken } from "../services/token.service.js";
 import logger from "../utils/logger.js";
 
 // --- Active Connections Registry ---
@@ -50,8 +51,25 @@ export function setupChatWebSocket(server) {
 
   // --- Handle New Connections ---
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
     let currentSessionId = null;
+
+    // --- Authenticate the socket ---
+    // Browsers can't set headers on a WS handshake, so the SPA passes the
+    // short-lived access token as a query param. Reject unauthenticated
+    // sockets immediately (1008 = policy violation).
+    try {
+      const url = new URL(req.url, "http://localhost");
+      const token = url.searchParams.get("token");
+      if (!token) throw new Error("missing token");
+      const payload = verifyAccessToken(token);
+      ws.userId = payload.sub;
+    } catch {
+      logger.warn("[WebSocket] Rejected unauthenticated connection");
+      sendJSON(ws, { type: "error", error: "Unauthorized" });
+      try { ws.close(1008, "Unauthorized"); } catch { /* noop */ }
+      return;
+    }
 
     ws.isAlive = true;
     ws.on("pong", () => {
@@ -126,12 +144,18 @@ async function handleMessage(ws, message, setSessionId) {
     // --- Initialize/Join a Session ---
     case "init": {
       const sessionId = message.sessionId || randomUUID();
-      const userId = message.userId || "default";
+      const userId = ws.userId;
       logger.debug(`[WebSocket] init session: ${sessionId}`);
 
-      // Create session in DB if it doesn't exist
+      // Create session in DB if it doesn't exist; if it does, it must
+      // belong to this authenticated user.
       const existing = await Session.findOne({ sessionId });
-      if (!existing) {
+      if (existing) {
+        if (existing.userId !== userId) {
+          sendJSON(ws, { type: "error", error: "Session not found" });
+          return;
+        }
+      } else {
         await Session.create({
           sessionId,
           userId,
@@ -167,6 +191,13 @@ async function handleMessage(ws, message, setSessionId) {
           type: "error",
           error: "Missing 'content' or 'sessionId' field",
         });
+        return;
+      }
+
+      // The session must exist and belong to this authenticated user.
+      const owned = await Session.findOne({ sessionId });
+      if (!owned || owned.userId !== ws.userId) {
+        sendJSON(ws, { type: "error", error: "Session not found" });
         return;
       }
 

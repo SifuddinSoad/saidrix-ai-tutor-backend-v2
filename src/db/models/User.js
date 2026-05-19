@@ -109,6 +109,16 @@ const userSchema = new mongoose.Schema(
       lastLoginAt: { type: Date, default: null },
       passwordChangedAt: { type: Date, default: null },
     },
+
+    // Gamification — driven by lecture/project completions.
+    // lastActivityDate is the date (UTC midnight) of the most recent
+    // completion; used to advance/reset the day streak.
+    stats: {
+      xp: { type: Number, default: 0 },
+      currentStreak: { type: Number, default: 0 },
+      longestStreak: { type: Number, default: 0 },
+      lastActivityDate: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,
@@ -133,6 +143,7 @@ userSchema.methods.toSafeJSON = function toSafeJSON() {
     selectedPlan: this.selectedPlan,
     status: this.status,
     trialEndsAt: this.trialEndsAt,
+    stats: this.stats,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

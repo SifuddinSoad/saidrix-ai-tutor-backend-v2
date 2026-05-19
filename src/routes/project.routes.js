@@ -20,9 +20,14 @@ import {
   BadRequestError,
   NotFoundError,
 } from "../errors/index.js";
+import { completeProject } from "../services/progress.service.js";
+import { authenticate } from "../middleware/authenticate.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
+
+// Projects are per-user; identity comes from the access token.
+router.use(authenticate);
 
 function paginate(query) {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -35,19 +40,15 @@ function paginate(query) {
 router.post(
   "/",
   asyncHandler(async (req, res) => {
-    const {
-      courseId,
-      userId = "default",
-      sessionId = null,
-      userContext = "",
-    } = req.body || {};
+    const { courseId, sessionId = null, userContext = "" } = req.body || {};
+    const userId = req.user.userId;
 
     if (!courseId) {
       throw new BadRequestError("Missing required field: courseId");
     }
 
     const course = await Course.findOne({ courseId }).lean();
-    if (!course) {
+    if (!course || course.userId !== userId) {
       throw new NotFoundError("Course not found");
     }
 
@@ -84,7 +85,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const job = await Job.findOne({ jobId: req.params.jobId }).lean();
 
-    if (!job) {
+    if (!job || job.userId !== req.user.userId) {
       throw new NotFoundError("Job not found");
     }
 
@@ -114,12 +115,11 @@ router.get(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { courseId, userId } = req.query;
+    const { courseId } = req.query;
     const { page, limit, skip } = paginate(req.query);
 
-    const filter = {};
+    const filter = { userId: req.user.userId };
     if (courseId) filter.courseId = courseId;
-    if (userId) filter.userId = userId;
 
     const [projects, total] = await Promise.all([
       Project.find(filter)
@@ -145,11 +145,40 @@ router.get(
       projectId: req.params.projectId,
     }).lean();
 
-    if (!project) {
+    if (!project || project.userId !== req.user.userId) {
       throw new NotFoundError("Project not found");
     }
 
     res.json({ project });
+  })
+);
+
+// --- PATCH /projects/:projectId/complete ---
+// Marks a project completed and awards XP once (idempotent: re-calling
+// when already completed grants nothing).
+router.patch(
+  "/:projectId/complete",
+  asyncHandler(async (req, res) => {
+    const project = await Project.findOne({
+      projectId: req.params.projectId,
+    });
+
+    if (!project || project.userId !== req.user.userId) {
+      throw new NotFoundError("Project not found");
+    }
+
+    const wasAlreadyCompleted = project.status === "completed";
+    if (!wasAlreadyCompleted) {
+      project.status = "completed";
+      await project.save();
+    }
+
+    const { newlyCompleted, stats } = await completeProject(
+      req.user.userId,
+      wasAlreadyCompleted
+    );
+
+    res.json({ project: project.toObject(), newlyCompleted, stats });
   })
 );
 
@@ -159,6 +188,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const result = await Project.deleteOne({
       projectId: req.params.projectId,
+      userId: req.user.userId,
     });
 
     if (result.deletedCount === 0) {
