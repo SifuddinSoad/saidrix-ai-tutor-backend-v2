@@ -39,11 +39,19 @@ export function setupChatWebSocket(server) {
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (ws.isAlive === false) {
-        try { ws.terminate(); } catch { /* noop */ }
+        try {
+          ws.terminate();
+        } catch {
+          /* noop */
+        }
         continue;
       }
       ws.isAlive = false;
-      try { ws.ping(); } catch { /* noop */ }
+      try {
+        ws.ping();
+      } catch {
+        /* noop */
+      }
     }
   }, 30000);
   heartbeat.unref?.();
@@ -67,7 +75,11 @@ export function setupChatWebSocket(server) {
     } catch {
       logger.warn("[WebSocket] Rejected unauthenticated connection");
       sendJSON(ws, { type: "error", error: "Unauthorized" });
-      try { ws.close(1008, "Unauthorized"); } catch { /* noop */ }
+      try {
+        ws.close(1008, "Unauthorized");
+      } catch {
+        /* noop */
+      }
       return;
     }
 
@@ -100,7 +112,10 @@ export function setupChatWebSocket(server) {
           currentSessionId = id;
         });
       } catch (err) {
-        logger.error("[WebSocket] Message handler failed:", err?.message || err);
+        logger.error(
+          "[WebSocket] Message handler failed:",
+          err?.message || err,
+        );
         sendJSON(ws, {
           type: "error",
           error: "Server failed to process the message. Please retry.",
@@ -220,7 +235,10 @@ async function handleMessage(ws, message, setSessionId) {
       // already has, enabling later PATCH lookups.
       let acc = "";
       try {
-        for await (const chunk of invokeChatAgent(sessionId, content, { messageId })) {
+        for await (const chunk of invokeChatAgent(sessionId, content, {
+          messageId,
+          userId: ws.userId,
+        })) {
           // Client disconnected mid-stream
           if (ws.readyState !== ws.OPEN) {
             logger.warn("[WebSocket] Client disconnected during streaming");

@@ -38,7 +38,9 @@ function getResearchAgent() {
       messageModifier: PROJECT_MAKER_SYSTEM_PROMPT,
     });
 
-    logger.info(`[ProjectMaker] Research agent ready with ${tools.length} tools`);
+    logger.info(
+      `[ProjectMaker] Research agent ready with ${tools.length} tools`,
+    );
   }
   return researchAgent;
 }
@@ -67,8 +69,8 @@ function withTimeout(promise, ms, label = "operation") {
     new Promise((_, reject) =>
       setTimeout(
         () => reject(new Error(`${label} timed out after ${ms}ms`)),
-        ms
-      )
+        ms,
+      ),
     ),
   ]);
 }
@@ -153,7 +155,7 @@ export async function invokeProjectMaker(input) {
     courseId,
     course,
     sessionId = null,
-    userId = "default",
+    userId = null,
     userContext = "",
     source = "auto",
     // When false, skip the ReAct research loop and generate projects
@@ -170,7 +172,9 @@ export async function invokeProjectMaker(input) {
 
   const startTime = Date.now();
   const courseTitle = course.course_title || "Untitled Course";
-  logger.info(`[ProjectMaker] Starting project generation for: "${courseTitle}"`);
+  logger.info(
+    `[ProjectMaker] Starting project generation for: "${courseTitle}"`,
+  );
 
   try {
     const outline = buildOutline(course);
@@ -191,12 +195,12 @@ export async function invokeProjectMaker(input) {
       });
       const researchMessages = researchResult.messages || [];
       logger.info(
-        `[ProjectMaker] Research complete (${researchMessages.length} messages)`
+        `[ProjectMaker] Research complete (${researchMessages.length} messages)`,
       );
       researchContext = extractResearchContext(researchMessages);
     } else {
       logger.info(
-        `[ProjectMaker] Research skipped (light mode) — structured output only`
+        `[ProjectMaker] Research skipped (light mode) — structured output only`,
       );
       researchContext =
         "(No external research performed — design the projects directly " +
@@ -217,7 +221,7 @@ export async function invokeProjectMaker(input) {
       Number(process.env.STRUCTURED_OUTPUT_TIMEOUT_MS) || 600000;
 
     logger.info(
-      `[ProjectMaker] Calling structured LLM (timeout: ${timeoutMs}ms)...`
+      `[ProjectMaker] Calling structured LLM (timeout: ${timeoutMs}ms)...`,
     );
 
     const data = await withTimeout(
@@ -226,12 +230,12 @@ export async function invokeProjectMaker(input) {
         new HumanMessage({ content: finalPrompt }),
       ]),
       timeoutMs,
-      "Structured output LLM call"
+      "Structured output LLM call",
     );
 
     const generated = data?.projects || [];
     logger.info(
-      `[ProjectMaker] Structured output received (${generated.length} projects)`
+      `[ProjectMaker] Structured output received (${generated.length} projects)`,
     );
 
     if (generated.length === 0) {
@@ -272,7 +276,7 @@ export async function invokeProjectMaker(input) {
     const elapsed = Date.now() - startTime;
 
     logger.info(
-      `[ProjectMaker] Saved ${projectIds.length} projects for course ${courseId} (${elapsed}ms)`
+      `[ProjectMaker] Saved ${projectIds.length} projects for course ${courseId} (${elapsed}ms)`,
     );
 
     const projects = created.map((d) => d.toObject());

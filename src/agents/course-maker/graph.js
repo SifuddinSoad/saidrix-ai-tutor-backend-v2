@@ -39,7 +39,9 @@ function getResearchAgent() {
       messageModifier: COURSE_MAKER_SYSTEM_PROMPT,
     });
 
-    logger.info(`[CourseMaker] Research agent ready with ${tools.length} tools`);
+    logger.info(
+      `[CourseMaker] Research agent ready with ${tools.length} tools`,
+    );
   }
   return researchAgent;
 }
@@ -69,8 +71,8 @@ function withTimeout(promise, ms, label = "operation") {
     new Promise((_, reject) =>
       setTimeout(
         () => reject(new Error(`${label} timed out after ${ms}ms`)),
-        ms
-      )
+        ms,
+      ),
     ),
   ]);
 }
@@ -91,7 +93,7 @@ export async function invokeCourseMaker(input) {
     duration = "",
     preferences = "",
     sessionId = null,
-    userId = "default",
+    userId = null,
   } = input;
 
   const startTime = Date.now();
@@ -115,7 +117,7 @@ export async function invokeCourseMaker(input) {
     // Collect all messages from the research stage
     const researchMessages = researchResult.messages || [];
     logger.info(
-      `[CourseMaker] Research complete (${researchMessages.length} messages)`
+      `[CourseMaker] Research complete (${researchMessages.length} messages)`,
     );
 
     // --- Stage 2: Structured output ---
@@ -134,7 +136,7 @@ export async function invokeCourseMaker(input) {
       Number(process.env.STRUCTURED_OUTPUT_TIMEOUT_MS) || 600000; // 10min default
 
     logger.info(
-      `[CourseMaker] Calling structured LLM (timeout: ${timeoutMs}ms)...`
+      `[CourseMaker] Calling structured LLM (timeout: ${timeoutMs}ms)...`,
     );
 
     const courseData = await withTimeout(
@@ -143,11 +145,11 @@ export async function invokeCourseMaker(input) {
         new HumanMessage({ content: finalPrompt }),
       ]),
       timeoutMs,
-      "Structured output LLM call"
+      "Structured output LLM call",
     );
 
     logger.info(
-      `[CourseMaker] Structured output received (${courseData.chapters?.length || 0} chapters)`
+      `[CourseMaker] Structured output received (${courseData.chapters?.length || 0} chapters)`,
     );
 
     // --- Stage 3: Save to MongoDB ---
@@ -164,7 +166,7 @@ export async function invokeCourseMaker(input) {
     });
 
     logger.info(
-      `[CourseMaker] Course saved: ${courseId} (${elapsed}ms, ${courseData.chapters.length} chapters)`
+      `[CourseMaker] Course saved: ${courseId} (${elapsed}ms, ${courseData.chapters.length} chapters)`,
     );
 
     // --- Auto-generate practice projects for this course ---
@@ -191,8 +193,8 @@ export async function invokeCourseMaker(input) {
       .then((m) => m.processProjectJob(projJobId, projParams))
       .catch((err) =>
         logger.error(
-          `[CourseMaker] auto-project generation failed: ${err.message}`
-        )
+          `[CourseMaker] auto-project generation failed: ${err.message}`,
+        ),
       );
 
     // --- Build a short summary for the chat agent ---
@@ -225,9 +227,10 @@ function extractResearchContext(messages) {
 
     // AI messages (the agent's reasoning + summary)
     if (type === "ai" && msg.content) {
-      const content = typeof msg.content === "string"
-        ? msg.content
-        : JSON.stringify(msg.content);
+      const content =
+        typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content);
       if (content.trim()) {
         lines.push(`[Agent]: ${content}`);
       }
@@ -235,9 +238,10 @@ function extractResearchContext(messages) {
 
     // Tool results
     if (type === "tool" && msg.content) {
-      const content = typeof msg.content === "string"
-        ? msg.content
-        : JSON.stringify(msg.content);
+      const content =
+        typeof msg.content === "string"
+          ? msg.content
+          : JSON.stringify(msg.content);
       lines.push(`[Tool: ${msg.name || "unknown"}]: ${content.slice(0, 2000)}`);
     }
   }
@@ -262,7 +266,7 @@ function buildSummary(course) {
       if (modNames.length > 3) covers += "; …";
       const cleanCh = (ch.chapter_name || `Chapter ${i + 1}`).replace(
         /\|/g,
-        "/"
+        "/",
       );
       covers = (covers || "—").replace(/\|/g, "/");
       return `| ${i + 1} | ${cleanCh} | ${covers} |`;

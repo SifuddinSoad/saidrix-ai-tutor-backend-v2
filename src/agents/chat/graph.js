@@ -95,7 +95,7 @@ export function parseCreateCourseCommand(text) {
   const grab = (key, nextKeys) => {
     const re = new RegExp(
       `${key}:\\s*(.*?)\\s*(?=,\\s*(?:${nextKeys})\\s*:|$)`,
-      "is"
+      "is",
     );
     const m = rest.match(re);
     return m ? m[1].trim() : "";
@@ -123,7 +123,7 @@ export function parseCreateCourseCommand(text) {
 export function parseCreateProjectCommand(text) {
   if (typeof text !== "string") return null;
   const head = text.match(
-    /^\s*\[CreateProject\]\s*"([^"]+)"\s*(?:[—–-]\s*(.+))?$/s
+    /^\s*\[CreateProject\]\s*"([^"]+)"\s*(?:[—–-]\s*(.+))?$/s,
   );
   if (!head) return null;
 
@@ -144,7 +144,7 @@ export function parseCreateProjectCommand(text) {
 export function parseCreateRoutineCommand(text) {
   if (typeof text !== "string") return null;
   const head = text.match(
-    /^\s*\[CreateRoutine\]\s*"([^"]+)"\s*(?:[—–-]\s*(.+))?$/s
+    /^\s*\[CreateRoutine\]\s*"([^"]+)"\s*(?:[—–-]\s*(.+))?$/s,
   );
   if (!head) return null;
 
@@ -172,7 +172,11 @@ export function parseCreateRoutineCommand(text) {
 // Handles conversation history and persistence
 
 export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
-  const { agent = getDefaultAgent(), messageId = null } = options;
+  const {
+    agent = getDefaultAgent(),
+    messageId = null,
+    userId = null,
+  } = options;
 
   try {
     logger.info(`[Agent] Processing message for session: ${sessionId}`);
@@ -200,7 +204,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         status: "running",
         startedAt,
       }).catch((err) =>
-        logger.warn(`[Agent] ToolCallLog start write failed: ${err.message}`)
+        logger.warn(`[Agent] ToolCallLog start write failed: ${err.message}`),
       );
 
       let summary = "";
@@ -214,6 +218,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
           goals: cmd.goals,
           duration: cmd.duration,
           sessionId,
+          userId,
         });
         summary = (result?.summary || "").trim();
         if (result?.courseId) {
@@ -241,9 +246,9 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
           completedAt,
           durationMs,
         },
-        { upsert: true, setDefaultsOnInsert: true }
+        { upsert: true, setDefaultsOnInsert: true },
       ).catch((err) =>
-        logger.warn(`[Agent] ToolCallLog result write failed: ${err.message}`)
+        logger.warn(`[Agent] ToolCallLog result write failed: ${err.message}`),
       );
 
       yield {
@@ -274,7 +279,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
       };
 
       logger.info(
-        `[Agent] [CreateCourse] handled directly for "${cmd.title}" (${durationMs}ms, ${courseRefs.length} ref)`
+        `[Agent] [CreateCourse] handled directly for "${cmd.title}" (${durationMs}ms, ${courseRefs.length} ref)`,
       );
       return;
     }
@@ -302,6 +307,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
           sessionId,
           userContext: projCmd.context,
           source: "chat",
+          userId,
         });
         summary = (result?.summary || "").trim() || "(projects created)";
       } catch (err) {
@@ -331,7 +337,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         proposal: null,
       };
       logger.info(
-        `[Agent] [CreateProject] handled directly for course ${projCmd.courseId} (${durationMs}ms)`
+        `[Agent] [CreateProject] handled directly for course ${projCmd.courseId} (${durationMs}ms)`,
       );
       return;
     }
@@ -382,7 +388,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         proposal: null,
       };
       logger.info(
-        `[Agent] [CreateRoutine] handled directly for [${routineCmd.courseIds.join(", ")}] (${durationMs}ms)`
+        `[Agent] [CreateRoutine] handled directly for [${routineCmd.courseIds.join(", ")}] (${durationMs}ms)`,
       );
       return;
     }
@@ -394,7 +400,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
       {
         configurable: { thread_id: sessionId },
         streamMode: "messages",
-      }
+      },
     );
 
     // Accumulate the full response for persistence
@@ -429,7 +435,9 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
             status: "running",
             startedAt: new Date(),
           }).catch((err) =>
-            logger.warn(`[Agent] ToolCallLog start write failed: ${err.message}`)
+            logger.warn(
+              `[Agent] ToolCallLog start write failed: ${err.message}`,
+            ),
           );
 
           yield {
@@ -440,9 +448,10 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         }
 
         if (chunk.content) {
-          const token = typeof chunk.content === "string"
-            ? chunk.content
-            : JSON.stringify(chunk.content);
+          const token =
+            typeof chunk.content === "string"
+              ? chunk.content
+              : JSON.stringify(chunk.content);
           fullResponse += token;
           yield { type: "token", content: token };
         }
@@ -451,9 +460,10 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
       // ===== Tools node — tool result =====
       if (metadata?.langgraph_node === "tools" && chunk.content) {
         const toolName = chunk.name || "unknown";
-        const content = typeof chunk.content === "string"
-          ? chunk.content
-          : JSON.stringify(chunk.content);
+        const content =
+          typeof chunk.content === "string"
+            ? chunk.content
+            : JSON.stringify(chunk.content);
 
         if (toolName === "create_course") {
           createCourseOutputs.push(content);
@@ -462,7 +472,9 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         // Correlate with the start we recorded (tool_call_id is the link)
         const toolCallId = chunk.tool_call_id || randomUUID();
         const startedRec = toolStarts.get(toolCallId);
-        const startedAt = startedRec ? new Date(startedRec.startedAt) : new Date();
+        const startedAt = startedRec
+          ? new Date(startedRec.startedAt)
+          : new Date();
         const completedAt = new Date();
         const durationMs = completedAt - startedAt;
 
@@ -478,9 +490,11 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
             completedAt,
             durationMs,
           },
-          { upsert: true, setDefaultsOnInsert: true }
+          { upsert: true, setDefaultsOnInsert: true },
         ).catch((err) =>
-          logger.warn(`[Agent] ToolCallLog result write failed: ${err.message}`)
+          logger.warn(
+            `[Agent] ToolCallLog result write failed: ${err.message}`,
+          ),
         );
 
         yield {
@@ -521,16 +535,24 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
     }
 
     // Save the (cleaned) assistant response + prompts to cache + MongoDB
-    if (cleanedText || (prompts && prompts.length) || (proposal && proposal.courses && proposal.courses.length)) {
+    if (
+      cleanedText ||
+      (prompts && prompts.length) ||
+      (proposal && proposal.courses && proposal.courses.length)
+    ) {
       const { AIMessage } = await import("@langchain/core/messages");
       const aiMsg = new AIMessage({ content: cleanedText });
       const additional = {};
       if (prompts && prompts.length) additional.prompts = prompts;
       if (courseRefs && courseRefs.length) additional.courseRefs = courseRefs;
-      if (proposal && proposal.courses && proposal.courses.length) additional.proposal = proposal;
+      if (proposal && proposal.courses && proposal.courses.length)
+        additional.proposal = proposal;
       if (messageId) additional.messageId = messageId;
       if (Object.keys(additional).length > 0) {
-        aiMsg.additional_kwargs = { ...(aiMsg.additional_kwargs || {}), ...additional };
+        aiMsg.additional_kwargs = {
+          ...(aiMsg.additional_kwargs || {}),
+          ...additional,
+        };
       }
       await sessionCache.append(sessionId, aiMsg);
     }
@@ -545,9 +567,8 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
     };
 
     logger.info(
-      `[Agent] Response complete for session: ${sessionId} (${cleanedText.length} chars, ${prompts.length} prompts, ${courseRefs.length} courseRefs, ${proposal?.courses?.length || 0} proposed)`
+      `[Agent] Response complete for session: ${sessionId} (${cleanedText.length} chars, ${prompts.length} prompts, ${courseRefs.length} courseRefs, ${proposal?.courses?.length || 0} proposed)`,
     );
-
   } catch (err) {
     logger.error(`[Agent] Error processing message:`, err.message);
 
@@ -562,7 +583,11 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
 // --- Invoke Chat Agent (Non-Streaming) ---
 // Simple request/response for REST API use
 
-export async function invokeChatAgentSync(sessionId, userMessage, options = {}) {
+export async function invokeChatAgentSync(
+  sessionId,
+  userMessage,
+  options = {},
+) {
   const chunks = [];
 
   for await (const chunk of invokeChatAgent(sessionId, userMessage, options)) {

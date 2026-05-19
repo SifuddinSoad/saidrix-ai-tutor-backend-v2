@@ -25,7 +25,7 @@ const unlockSchema = new Schema(
     topic_indices: { type: [Number], default: [] },
     description: { type: String, default: "" },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const projectSchema = new Schema(
@@ -42,7 +42,6 @@ const projectSchema = new Schema(
     courseId: {
       type: String,
       required: true,
-      index: true,
     },
 
     // How this project was created
@@ -81,7 +80,7 @@ const projectSchema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // --- Indexes for listing ---
