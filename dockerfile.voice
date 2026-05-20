@@ -1,6 +1,18 @@
-FROM node:22-alpine
+FROM node:22-slim
+
 WORKDIR /app
-COPY package*.json ./
+
+# Native bindings er jonno minimal deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json ./
+
+# package-lock.json copy KORBA NA — fresh install korte hobe
+# karon lock file Windows e banano, Linux optional deps missing
 RUN npm install --omit=dev
+
 COPY . .
+
 CMD ["node", "src/agents/voice-tutor/worker.js", "start"]
