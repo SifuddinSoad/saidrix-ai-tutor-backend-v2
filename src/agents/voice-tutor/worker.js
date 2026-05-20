@@ -481,8 +481,13 @@ export default defineAgent({
 // Worker Bootstrap
 // ===========================================
 
+// numIdleProcesses: number of pre-warmed worker processes kept ready for
+// incoming jobs. Default is 3 — each idle process holds its own Mongo
+// connection + Silero VAD model (~150MB RAM each). For low-traffic
+// production, 1 is enough; scale via env var when load grows.
 cli.runApp(
   new WorkerOptions({
     agent: fileURLToPath(import.meta.url),
+    numIdleProcesses: Number(process.env.VOICE_IDLE_PROCESSES) || 1,
   })
 );
