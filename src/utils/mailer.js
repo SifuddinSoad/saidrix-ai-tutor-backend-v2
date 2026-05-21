@@ -10,7 +10,11 @@
 
 import nodemailer from "nodemailer";
 import { authConfig } from "../config/auth.config.js";
-import { verificationEmail } from "./emailTemplates.js";
+import {
+  verificationEmail,
+  codeEmail,
+  supportTicketEmail,
+} from "./emailTemplates.js";
 import logger from "./logger.js";
 
 const { smtp, from } = authConfig.mail;
@@ -71,4 +75,69 @@ export async function sendVerificationEmail(to, name, code) {
   logger.info(`[mailer] verification email sent to ${to}`);
 }
 
-export default { sendVerificationEmail };
+// Send a settings 6-digit code (change_password / change_email).
+// Same dev fallback as the signup code email.
+export async function sendCodeEmail({ to, name, code, purpose }) {
+  if (!SMTP_ENABLED) {
+    if (!authConfig.isProd) {
+      logger.info(`[mailer:dev] ${purpose} code for ${to}: ${code}`);
+      return;
+    }
+    logger.error(
+      "[mailer] SMTP not configured in production — cannot send code email"
+    );
+    throw new Error("Email delivery is not configured");
+  }
+
+  const { subject, text, html } = codeEmail({ name, code, purpose });
+
+  await transport.sendMail({
+    from,
+    to,
+    subject,
+    text,
+    html,
+    headers: { "X-Entity-Ref-ID": `saidrix-${purpose}` },
+  });
+
+  logger.info(`[mailer] ${purpose} email sent to ${to}`);
+}
+
+// Forward a contact-form submission to the support inbox.
+// In dev (no SMTP) logs to console; in prod throws if SMTP missing.
+export async function sendSupportTicketEmail({ fromName, fromEmail, subject, message }) {
+  const inbox = process.env.SUPPORT_INBOX_EMAIL;
+  if (!inbox) {
+    logger.warn("[mailer] SUPPORT_INBOX_EMAIL not set — ticket stored only, not emailed");
+    return;
+  }
+
+  if (!SMTP_ENABLED) {
+    if (!authConfig.isProd) {
+      logger.info(
+        `[mailer:dev] support ticket from ${fromEmail}: ${subject}\n${message}`
+      );
+      return;
+    }
+    throw new Error("Email delivery is not configured");
+  }
+
+  const built = supportTicketEmail({ fromName, fromEmail, subject, message });
+  await transport.sendMail({
+    from,
+    to: inbox,
+    replyTo: fromEmail,
+    subject: built.subject,
+    text: built.text,
+    html: built.html,
+    headers: { "X-Entity-Ref-ID": "saidrix-support" },
+  });
+
+  logger.info(`[mailer] support ticket forwarded to ${inbox} from ${fromEmail}`);
+}
+
+export default {
+  sendVerificationEmail,
+  sendCodeEmail,
+  sendSupportTicketEmail,
+};

@@ -77,6 +77,12 @@ const projectSchema = new Schema(
     sessionId: { type: String, index: true },
     userId: { type: String, default: "default", index: true },
     metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+
+    // --- Review pipeline ---
+    // latestReviewId points at the most recent ProjectReview; history
+    // is the ordered list of every submission (oldest → newest).
+    latestReviewId: { type: String, default: "" },
+    submissionHistory: { type: [String], default: [] },
   },
   {
     timestamps: true,

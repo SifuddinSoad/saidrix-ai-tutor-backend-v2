@@ -152,4 +152,107 @@ export function verificationEmail(name, code) {
   };
 }
 
-export default { verificationEmail };
+// --- Generic 6-digit code email (re-used for password/email change) ----
+
+const CODE_COPY = {
+  change_password: {
+    heading: "Confirm your new password",
+    intro:
+      "Use the code below to confirm the password change. If you didn't request this, you can safely ignore this email.",
+    subjectPrefix: "Confirm your password change",
+  },
+  change_email: {
+    heading: "Confirm your new email",
+    intro:
+      "Use the code below to confirm this as your new account email. If you didn't request this, you can safely ignore this email.",
+    subjectPrefix: "Confirm your email change",
+  },
+};
+
+export function codeEmail({ name, code, purpose }) {
+  const copy = CODE_COPY[purpose] || CODE_COPY.change_password;
+  const safeName = name ? escapeHtml(name) : "there";
+  const minutes = Math.round(authConfig.verification.codeTtlMs / 60000);
+  const spaced = String(code).split("").join("&nbsp;&nbsp;");
+  const subject = `${code} · ${copy.subjectPrefix}`;
+
+  const text =
+    `Hi ${name || "there"},\n\n` +
+    `${copy.intro}\n\n` +
+    `    ${code}\n\n` +
+    `This code expires in ${minutes} minutes.\n\n` +
+    `— The ${BRAND.name} team`;
+
+  const bodyHtml = `
+    <h1 style="margin:0 0 8px;font:700 22px system-ui,Segoe UI,Arial,sans-serif;
+               color:${BRAND.ink};">${copy.heading}</h1>
+    <p style="margin:0 0 24px;font:15px/1.6 system-ui,Segoe UI,Arial,sans-serif;
+              color:${BRAND.muted};">
+      Hi ${safeName}, ${copy.intro}
+    </p>
+
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td align="center"
+            style="background:${BRAND.accentSoft};border:1px solid #ddd6fe;
+                   border-radius:12px;padding:22px 0;">
+          <div style="font:700 34px/1 'Courier New',monospace;
+                      letter-spacing:4px;color:${BRAND.accent};">
+            ${spaced}
+          </div>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:22px 0 0;font:13px/1.6 system-ui,Segoe UI,Arial,sans-serif;
+              color:${BRAND.muted};">
+      This code expires in <strong style="color:${BRAND.ink};">${minutes} minutes</strong>.
+      For your security, never share it with anyone.
+    </p>`;
+
+  return {
+    subject,
+    text,
+    html: layout({
+      preheader: `Your ${BRAND.name} code is ${code} (expires in ${minutes} min)`,
+      heading: subject,
+      bodyHtml,
+    }),
+  };
+}
+
+// --- Support ticket forward email (admin-bound) ------------------------
+
+export function supportTicketEmail({ fromName, fromEmail, subject, message }) {
+  const safeName = escapeHtml(fromName || fromEmail || "user");
+  const safeEmail = escapeHtml(fromEmail || "");
+  const safeSubject = escapeHtml(subject || "(no subject)");
+  const safeMessage = escapeHtml(message || "").replace(/\n/g, "<br>");
+
+  const out = {
+    subject: `[Support] ${subject || "(no subject)"}`,
+    text:
+      `New support request from ${fromName || fromEmail}\n` +
+      `Email: ${fromEmail}\n` +
+      `Subject: ${subject || "(no subject)"}\n\n` +
+      `${message || ""}\n`,
+    html: layout({
+      preheader: `New support request from ${fromName || fromEmail}`,
+      heading: "Support request",
+      bodyHtml: `
+        <h1 style="margin:0 0 8px;font:700 22px system-ui,Segoe UI,Arial,sans-serif;
+                   color:${BRAND.ink};">New support request</h1>
+        <p style="margin:0 0 12px;font:14px/1.5 system-ui,Segoe UI,Arial,sans-serif;color:${BRAND.muted};">
+          <strong style="color:${BRAND.ink};">From:</strong> ${safeName} &lt;${safeEmail}&gt;<br>
+          <strong style="color:${BRAND.ink};">Subject:</strong> ${safeSubject}
+        </p>
+        <div style="background:${BRAND.accentSoft};border:1px solid #ddd6fe;
+                    border-radius:12px;padding:18px 20px;font:14px/1.6 system-ui,Segoe UI,Arial,sans-serif;color:${BRAND.ink};">
+          ${safeMessage}
+        </div>`,
+    }),
+  };
+  return out;
+}
+
+export default { verificationEmail, codeEmail, supportTicketEmail };

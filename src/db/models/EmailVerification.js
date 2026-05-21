@@ -35,13 +35,34 @@ const emailVerificationSchema = new mongoose.Schema(
 
     purpose: {
       type: String,
-      enum: ["signup", "password_reset"],
+      enum: [
+        "signup",
+        "password_reset",
+        "change_password",
+        "change_email",
+      ],
       default: "signup",
     },
 
     attempts: {
       type: Number,
       default: 0,
+    },
+
+    // For change_email: the NEW email address being verified.
+    // For change_password: unused.
+    target: {
+      type: String,
+      default: null,
+      lowercase: true,
+      trim: true,
+    },
+
+    // Free-form payload used by settings flows.
+    //   change_password → { newPasswordHash: "<bcrypt>" }
+    payload: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
     },
 
     expiresAt: {

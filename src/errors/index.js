@@ -8,6 +8,7 @@ export {
   BadRequestError,
   ValidationError,
   UnauthorizedError,
+  PaymentRequiredError,
   ForbiddenError,
   NotFoundError,
   ConflictError,

@@ -14,10 +14,19 @@ import lectureRoutes from "./routes/lecture.routes.js";
 import voiceRoutes from "./routes/voice.routes.js";
 import enrichmentRoutes from "./routes/enrichment.routes.js";
 import projectRoutes from "./routes/project.routes.js";
+import {
+  nestedRouter as projectReviewNestedRoutes,
+  flatRouter as projectReviewFlatRoutes,
+} from "./routes/projectReview.routes.js";
 import routineRoutes from "./routes/routine.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import progressRoutes from "./routes/progress.routes.js";
 import authRoutes from "./routes/auth.routes.js";
+import profileRoutes from "./routes/profile.routes.js";
+import settingsRoutes from "./routes/settings.routes.js";
+import billingRoutes, { billingWebhookHandler } from "./routes/billing.routes.js";
+import { authenticate } from "./middleware/authenticate.js";
+import { trialExpiry } from "./middleware/trialExpiry.js";
 import { notFoundHandler, errorHandler } from "./errors/index.js";
 
 const app = express();
@@ -56,6 +65,14 @@ app.use(
   )
 );
 
+// LemonSqueezy webhook needs the raw body for HMAC verification.
+// Must be mounted BEFORE express.json() globally swallows it.
+app.post(
+  "/api/billing/webhook",
+  express.raw({ type: "application/json" }),
+  billingWebhookHandler
+);
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -68,11 +85,18 @@ app.get("/", (req, res) => {
 // --- API Routes ---
 
 app.use("/api/auth", authRoutes);
+app.use("/api/profile", authenticate, profileRoutes);
+app.use("/api/settings", authenticate, settingsRoutes);
+app.use("/api/billing", authenticate, trialExpiry, billingRoutes);
 app.use("/api/chat", chatRoutes);
 app.use("/api", courseRoutes);
 app.use("/api/lectures", lectureRoutes);
 app.use("/api/voice", voiceRoutes);
 app.use("/api/enrichment", enrichmentRoutes);
+// Review subroutes must mount BEFORE /api/projects so the more
+// specific path (/api/projects/:projectId/reviews/...) wins.
+app.use("/api/projects/:projectId/reviews", projectReviewNestedRoutes);
+app.use("/api/reviews", projectReviewFlatRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/routines", routineRoutes);
 app.use("/api/dashboard", dashboardRoutes);

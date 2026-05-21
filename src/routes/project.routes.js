@@ -22,6 +22,7 @@ import {
 } from "../errors/index.js";
 import { completeProject } from "../services/progress.service.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { checkUsageLimit } from "../middleware/checkUsageLimit.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
@@ -37,8 +38,11 @@ function paginate(query) {
 
 // --- POST /projects ---
 // Generate project(s) for an existing course (async job).
+// Gated by plan: trial users allowed, paid users counted against
+// TIER_LIMITS[plan].projectReviews per billing period.
 router.post(
   "/",
+  checkUsageLimit("projectReviews"),
   asyncHandler(async (req, res) => {
     const { courseId, sessionId = null, userContext = "" } = req.body || {};
     const userId = req.user.userId;

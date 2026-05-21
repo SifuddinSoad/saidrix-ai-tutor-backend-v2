@@ -41,6 +41,13 @@ export class ValidationError extends AppError {
   }
 }
 
+// --- 402 — payment required (trial expired / inactive subscription) ---
+export class PaymentRequiredError extends AppError {
+  constructor(message = "Payment required", opts = {}) {
+    super(message, 402, { code: "PAYMENT_REQUIRED", ...opts });
+  }
+}
+
 // --- 401 ---
 export class UnauthorizedError extends AppError {
   constructor(message = "Unauthorized", opts = {}) {

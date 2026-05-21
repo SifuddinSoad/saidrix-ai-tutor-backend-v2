@@ -119,6 +119,55 @@ const userSchema = new mongoose.Schema(
       longestStreak: { type: Number, default: 0 },
       lastActivityDate: { type: Date, default: null },
     },
+
+    // Personal profile (user-editable via /api/profile/overview).
+    // All optional — every existing user keeps working with empty defaults.
+    profile: {
+      phone:     { type: String, default: "", trim: true, maxlength: 40 },
+      bio:       { type: String, default: "", trim: true, maxlength: 500 },
+      avatarUrl: { type: String, default: "", trim: true, maxlength: 500 },
+    },
+
+    // Career info (user-editable via /api/profile/career).
+    career: {
+      currentRole:     { type: String, default: "", trim: true, maxlength: 120 },
+      experienceLevel: { type: String, default: "", trim: true, maxlength: 60 },
+      industry:        { type: String, default: "", trim: true, maxlength: 120 },
+      targetRole:      { type: String, default: "", trim: true, maxlength: 120 },
+      careerGoal:      { type: String, default: "", trim: true, maxlength: 1000 },
+      skills:          { type: [String], default: [] },
+    },
+
+    // LemonSqueezy subscription state. Populated/updated by webhook handlers
+    // in src/services/billing.service.js. `user.plan` (above) is the
+    // access-tier source of truth; this sub-doc carries everything billing
+    // needs to manage the customer (portal URL, card display, renewal date).
+    subscription: {
+      lemonCustomerId:        { type: String, default: null },
+      lemonSubscriptionId:    { type: String, default: null },
+      lemonVariantId:         { type: String, default: null },
+      status: {
+        type: String,
+        enum: ["active", "on_trial", "past_due", "cancelled", "expired", "unpaid", "paused", null],
+        default: null,
+      },
+      billingCycle:           { type: String, enum: ["monthly", "annual", null], default: null },
+      renewsAt:               { type: Date, default: null },
+      endsAt:                 { type: Date, default: null }, // set on cancellation — access until this date
+      cardBrand:              { type: String, default: "" },
+      cardLastFour:           { type: String, default: "" },
+      customerPortalUrl:      { type: String, default: "" },
+      updatePaymentMethodUrl: { type: String, default: "" },
+    },
+
+    // Social links (user-editable via /api/profile/social).
+    social: {
+      github:    { type: String, default: "", trim: true, maxlength: 200 },
+      linkedin:  { type: String, default: "", trim: true, maxlength: 200 },
+      twitter:   { type: String, default: "", trim: true, maxlength: 200 },
+      portfolio: { type: String, default: "", trim: true, maxlength: 200 },
+      other:     { type: String, default: "", trim: true, maxlength: 200 },
+    },
   },
   {
     timestamps: true,
@@ -144,6 +193,10 @@ userSchema.methods.toSafeJSON = function toSafeJSON() {
     status: this.status,
     trialEndsAt: this.trialEndsAt,
     stats: this.stats,
+    profile: this.profile || {},
+    career: this.career || { skills: [] },
+    social: this.social || {},
+    subscription: this.subscription || {},
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };
