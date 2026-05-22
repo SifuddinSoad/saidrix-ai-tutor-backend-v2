@@ -7,12 +7,13 @@
 //
 // status lifecycle (signup is multi-step):
 //   pending_verification -> pending_password
-//     -> pending_plan -> trialing -> active
+//     -> pending_plan -> pending_payment -> trialing -> active
 //   (also: expired | suspended)
 //
-// Trial expiry / plan enforcement is intentionally NOT
-// enforced here — modeled only (trialEndsAt,
-// selectedPlan) and left to the later billing task.
+// `pending_payment`: plan chosen at signup but the user has not
+// yet completed the LemonSqueezy hosted checkout (no card on file).
+// They have a session but `requireActive` denies content until the
+// subscription_created webhook flips them to `trialing`/`active`.
 // ===========================================
 
 import mongoose from "mongoose";
@@ -23,11 +24,14 @@ const STATUSES = [
   "pending_verification",
   "pending_password",
   "pending_plan",
+  "pending_payment",
   "trialing",
   "active",
   "expired",
   "suspended",
 ];
+
+const BILLING_CYCLES = ["monthly", "annual"];
 
 const userSchema = new mongoose.Schema(
   {
@@ -88,6 +92,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: PLANS,
       default: null,
+    },
+
+    // Billing cycle chosen at signup — remembered across the LemonSqueezy
+    // redirect and reused if the user resumes an abandoned checkout.
+    selectedCycle: {
+      type: String,
+      enum: BILLING_CYCLES,
+      default: "monthly",
     },
 
     status: {
@@ -190,6 +202,7 @@ userSchema.methods.toSafeJSON = function toSafeJSON() {
     role: this.role,
     plan: this.plan,
     selectedPlan: this.selectedPlan,
+    selectedCycle: this.selectedCycle,
     status: this.status,
     trialEndsAt: this.trialEndsAt,
     stats: this.stats,

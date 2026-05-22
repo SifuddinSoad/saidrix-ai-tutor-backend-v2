@@ -14,12 +14,14 @@ import {
   NotFoundError,
 } from "../errors/index.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
 
 // Every chat endpoint is per-user: identity comes from the access token.
-router.use(authenticate);
+// requireActive gates on subscription status (trialing/active only).
+router.use(authenticate, requireActive);
 
 // Load a session and assert it belongs to the caller (404 if missing OR
 // not owned — don't leak existence of other users' sessions).

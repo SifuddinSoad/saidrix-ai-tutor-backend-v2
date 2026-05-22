@@ -101,6 +101,8 @@ export async function invokeRoutineManager(input) {
     userId = "default",
     courseIds = [],
     dailyHours = 1,
+    totalDays = 0,
+    readingTime = "",
     startDate = new Date(),
     sessionId = null,
   } = input;
@@ -108,6 +110,12 @@ export async function invokeRoutineManager(input) {
   if (!Array.isArray(courseIds) || courseIds.length === 0) {
     throw new Error("invokeRoutineManager requires a non-empty courseIds array");
   }
+
+  // dailyHours can be omitted when the caller (chat agent) only supplies
+  // totalDays — we then auto-derive it from total course minutes / days.
+  // The actual computation happens below after we've fetched the courses
+  // and their lecture durations.
+  let effectiveDailyHours = Number(dailyHours) || 0;
 
   const start = startDate instanceof Date ? startDate : new Date(startDate);
   if (isNaN(start.getTime())) {
@@ -126,6 +134,7 @@ export async function invokeRoutineManager(input) {
     }
 
     const blocks = [];
+    let totalCourseMinutes = 0;
     for (const course of courses) {
       // Map existing lecture durations by course location
       const lectures = await Lecture.find({ courseId: course.courseId })
@@ -142,12 +151,40 @@ export async function invokeRoutineManager(input) {
 
       const projects = await Project.find({ courseId: course.courseId }).lean();
       blocks.push(buildCourseBlock(course, lectureMap, projects));
+
+      // Sum minutes across every topic (with fallback for missing lectures).
+      (course.chapters || []).forEach((ch, ci) => {
+        (ch.modules || []).forEach((mod, mi) => {
+          (mod.sub_modules || []).forEach((sm, si) => {
+            (sm.topics || []).forEach((_, ti) => {
+              const key = `${ci}.${mi}.${si}.${ti}`;
+              totalCourseMinutes += lectureMap.get(key) || DEFAULT_TOPIC_MINUTES;
+            });
+          });
+        });
+      });
     }
+
+    // Auto-derive dailyHours if the caller didn't specify it but did
+    // give us a target window. Round up to the nearest 0.5h, clamp to
+    // a sensible range so the LLM still has slack.
+    if (!effectiveDailyHours && totalDays > 0 && totalCourseMinutes > 0) {
+      const perDay = totalCourseMinutes / totalDays;
+      const hours = Math.ceil((perDay / 60) * 2) / 2; // round up to 0.5h
+      effectiveDailyHours = Math.min(8, Math.max(0.5, hours));
+      logger.info(
+        `[RoutineManager] dailyHours auto-derived: ${effectiveDailyHours}h ` +
+          `(course ≈ ${Math.round(totalCourseMinutes)} min / ${totalDays} days)`
+      );
+    }
+    if (!effectiveDailyHours) effectiveDailyHours = 1; // final fallback
 
     const startDateLabel = start.toISOString().slice(0, 10);
     const prompt = buildRoutinePrompt({
       courseBlocks: blocks.join("\n\n"),
-      dailyHours,
+      dailyHours: effectiveDailyHours,
+      totalDays,
+      readingTime,
       startDateLabel,
     });
 
@@ -182,6 +219,7 @@ export async function invokeRoutineManager(input) {
         return {
           date,
           items: (d.items || []).map((it) => ({
+            taskId: randomUUID(),
             type: it.type,
             title: it.title,
             courseId: it.courseId || "",
@@ -189,6 +227,8 @@ export async function invokeRoutineManager(input) {
             projectId:
               it.type === "project_deadline" ? it.projectId : undefined,
             estimated_minutes: Number(it.estimated_minutes) || 0,
+            done: false,
+            doneAt: null,
           })),
         };
       });
@@ -199,7 +239,9 @@ export async function invokeRoutineManager(input) {
       title: data.routine_title || "Study Routine",
       courseIds,
       startDate: start,
-      dailyHours,
+      dailyHours: effectiveDailyHours,
+      totalDays,
+      readingTime,
       days,
       sessionId,
       userId,
@@ -213,7 +255,10 @@ export async function invokeRoutineManager(input) {
     return {
       routineId,
       routine: routineDoc.toObject(),
-      summary: buildSummary(data.routine_title || "Study Routine", days),
+      summary: buildSummary(data.routine_title || "Study Routine", days, {
+        dailyHours: effectiveDailyHours,
+        readingTime,
+      }),
     };
   } catch (err) {
     logger.error("[RoutineManager] Generation failed:", err.message);
@@ -221,14 +266,82 @@ export async function invokeRoutineManager(input) {
   }
 }
 
-function buildSummary(title, days) {
+function buildSummary(title, days, meta = {}) {
   const totalItems = days.reduce((n, d) => n + d.items.length, 0);
+  const totalMinutes = days.reduce(
+    (n, d) => n + d.items.reduce((m, it) => m + (it.estimated_minutes || 0), 0),
+    0
+  );
+  const totalDeadlines = days.reduce(
+    (n, d) => n + d.items.filter((it) => it.type === "project_deadline").length,
+    0
+  );
   const first = days[0]?.date;
   const last = days[days.length - 1]?.date;
-  const fmt = (d) => (d ? new Date(d).toISOString().slice(0, 10) : "—");
-  return `✅ **${title}** — ${days.length} study day(s), ${totalItems} item(s), ${fmt(
-    first
-  )} → ${fmt(last)}.`;
+  const fmtDate = (d) =>
+    d
+      ? new Date(d).toLocaleDateString("en-US", {
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        })
+      : "—";
+
+  // Header (single line of compact stats).
+  const headerParts = [
+    `### ✅ ${title}`,
+    "",
+    `**${days.length} days** · **${totalItems} sessions** · **${Math.round(totalMinutes / 60 * 10) / 10}h total**` +
+      (totalDeadlines > 0 ? ` · **🎯 ${totalDeadlines} deadline${totalDeadlines === 1 ? "" : "s"}**` : ""),
+    `_${fmtDate(first)} → ${fmtDate(last)}_` +
+      (meta.dailyHours ? ` · _${meta.dailyHours}h/day_` : "") +
+      (meta.readingTime ? ` · _${meta.readingTime}_` : ""),
+  ];
+
+  // Per-day sections with proper markdown bullets — no HTML.
+  const MAX_DAYS = 14;
+  const visible = days.slice(0, MAX_DAYS);
+
+  const daySections = visible.map((d) => {
+    const lectures = d.items.filter((it) => it.type !== "project_deadline");
+    const deadlines = d.items.filter((it) => it.type === "project_deadline");
+    const dayMinutes = lectures.reduce((m, it) => m + (it.estimated_minutes || 0), 0);
+
+    const meta = [];
+    if (lectures.length) {
+      const hrs = Math.round((dayMinutes / 60) * 10) / 10;
+      meta.push(`${lectures.length} session${lectures.length === 1 ? "" : "s"} · ${hrs}h`);
+    }
+    if (deadlines.length) meta.push(`🎯 ${deadlines.length} due`);
+
+    const bullets = [];
+    for (const it of lectures) {
+      const t = (it.title || "").replace(/\|/g, "/");
+      const m = it.estimated_minutes ? ` _(${it.estimated_minutes}m)_` : "";
+      bullets.push(`- ${t}${m}`);
+    }
+    for (const it of deadlines) {
+      const t = (it.title || "").replace(/\|/g, "/");
+      bullets.push(`- 🎯 **${t}** — due today`);
+    }
+    if (bullets.length === 0) bullets.push(`- _rest day_`);
+
+    return `**${fmtDate(d.date)}**${meta.length ? `  ·  ${meta.join(" · ")}` : ""}\n${bullets.join("\n")}`;
+  });
+
+  const more =
+    days.length > MAX_DAYS
+      ? `\n\n_…and ${days.length - MAX_DAYS} more day(s). Open the **Routine** page to see the full schedule._`
+      : "";
+
+  return [
+    ...headerParts,
+    "",
+    "---",
+    "",
+    daySections.join("\n\n"),
+    more,
+  ].join("\n");
 }
 
 export default { invokeRoutineManager };

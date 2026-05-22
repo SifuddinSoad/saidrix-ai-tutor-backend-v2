@@ -23,18 +23,28 @@ Produce ONLY the structured schedule. No prose.`;
 export function buildRoutinePrompt({
   courseBlocks,
   dailyHours,
+  totalDays = 0,
+  readingTime = "",
   startDateLabel,
 }) {
+  const totalDaysLine = totalDays > 0
+    ? `**Target window**: finish within ${totalDays} day(s) (day_offset max = ${totalDays - 1}). If the daily budget × ${totalDays} is too small, prioritise covering every topic — never skip topics, but you may push a small number of days slightly over budget.`
+    : `**Target window**: no hard deadline — pack naturally within the daily budget.`;
+  const readingLine = readingTime
+    ? `**Preferred reading time** (informational, not enforced by the schedule): ${readingTime}.`
+    : ``;
   return `Build a study routine.
 
 **Start date**: ${startDateLabel} (this is day_offset 0)
 **Daily study budget**: ${dailyHours} hour(s) ≈ ${Math.round(
     Number(dailyHours) * 60
   )} minutes/day
+${totalDaysLine}
+${readingLine}
 
 ${courseBlocks}
 
-Generate the day-by-day routine now, following all rules. Cover every topic in order, respect the daily budget, and place each project_deadline correctly after its prerequisite topics.`;
+Generate the day-by-day routine now, following all rules. Cover every topic in order, respect the daily budget and target window, and place each project_deadline correctly after its prerequisite topics.`;
 }
 
 export default { ROUTINE_MANAGER_SYSTEM_PROMPT, buildRoutinePrompt };

@@ -11,11 +11,12 @@ import Course from "../db/models/Course.js";
 import Project from "../db/models/Project.js";
 import LectureCompletion from "../db/models/LectureCompletion.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import { asyncHandler } from "../errors/index.js";
 import { countTopics, progressPercent, courseTag } from "../utils/courseProgress.js";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActive);
 
 // Map the stored project status to the UI's three groups.
 const PROJECT_STATUS_UI = {

@@ -54,7 +54,7 @@ const imageBlockSchema = z.object({
     placeholder_url: z
       .string()
       .optional()
-      .describe("Empty string or placeholder URL — actual image will be added later"),
+      .describe("Always leave this an empty string — the real image URL is added later in data.url"),
     alt: z.string().describe("Alt text for accessibility"),
     description: z
       .string()

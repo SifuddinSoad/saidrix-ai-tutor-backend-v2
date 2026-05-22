@@ -7,6 +7,6 @@
 // orchestrator (LLM / explainer deps).
 // ===========================================
 
-export const PIPELINE_VERSION = 2;
+export const PIPELINE_VERSION = 3;
 
 export default { PIPELINE_VERSION };

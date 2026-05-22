@@ -22,13 +22,14 @@ import {
 } from "../errors/index.js";
 import { completeProject } from "../services/progress.service.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import { checkUsageLimit } from "../middleware/checkUsageLimit.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
 
 // Projects are per-user; identity comes from the access token.
-router.use(authenticate);
+router.use(authenticate, requireActive);
 
 function paginate(query) {
   const page = Math.max(Number(query.page) || 1, 1);

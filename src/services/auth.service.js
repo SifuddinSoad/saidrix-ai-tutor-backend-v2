@@ -15,6 +15,8 @@ import User from "../db/models/User.js";
 import EmailVerification from "../db/models/EmailVerification.js";
 import RefreshToken from "../db/models/RefreshToken.js";
 import { authConfig } from "../config/auth.config.js";
+import { BILLING_CYCLES } from "../config/billing.config.js";
+import { startCheckout } from "./billing.service.js";
 import {
   generateNumericCode,
   sha256,
@@ -36,7 +38,7 @@ import {
   NotFoundError,
 } from "../errors/index.js";
 
-const { verification, password, lockout, trial, plans, paidPlans } = authConfig;
+const { verification, password, lockout, paidPlans } = authConfig;
 
 // --- Input validation helpers -------------------------------------------
 
@@ -226,12 +228,24 @@ export async function setPassword({ userId, password: pw }) {
   return { ok: true, userId: user.userId };
 }
 
-// --- Step 4: select plan (issues the real session) ----------------------
+// --- Step 4: select plan (starts the card-gated trial checkout) ---------
+//
+// The user picks a paid plan + billing cycle. We record the choice, move
+// them to `pending_payment`, and create a LemonSqueezy hosted checkout
+// (with a trial configured on the variant). A session IS issued here so
+// the httpOnly refresh cookie survives the full-page redirect to LS and
+// back — but the token carries status `pending_payment`, so `requireActive`
+// denies content until the subscription_created webhook flips the status.
 
-export async function selectPlan({ userId, plan, ctx }) {
-  if (!plans.includes(plan)) {
+export async function selectPlan({ userId, plan, cycle, redirectUrl, ctx }) {
+  if (!paidPlans.includes(plan)) {
     throw new BadRequestError(
-      `plan must be one of: ${plans.join(", ")}`
+      `plan must be one of: ${paidPlans.join(", ")}`
+    );
+  }
+  if (!BILLING_CYCLES.includes(cycle)) {
+    throw new BadRequestError(
+      `cycle must be one of: ${BILLING_CYCLES.join(", ")}`
     );
   }
 
@@ -240,22 +254,26 @@ export async function selectPlan({ userId, plan, ctx }) {
   if (!user.passwordHash) {
     throw new ForbiddenError("Set a password first");
   }
-  if (!["pending_plan", "trialing", "active"].includes(user.status)) {
+  if (!["pending_plan", "pending_payment"].includes(user.status)) {
     throw new ForbiddenError("Account is not in plan-selection state");
   }
 
   user.selectedPlan = plan;
-  // Paid plans are only recorded — billing (separate task) activates them.
-  // Until then everyone gets effective free-trial access.
-  user.plan = "free_trial";
-  user.status = "trialing";
-  user.trialEndsAt = new Date(
-    Date.now() + trial.days * 24 * 60 * 60 * 1000
-  );
+  user.selectedCycle = cycle;
+  user.status = "pending_payment";
+  // `plan`, `trialEndsAt` and subscription state are set authoritatively
+  // by the subscription_created webhook once the card is on file.
   await user.save();
 
+  const { url: checkoutUrl } = await startCheckout({
+    userId: user.userId,
+    plan,
+    cycle,
+    redirectUrl,
+  });
+
   const session = await issueSession(user, ctx);
-  return { user: user.toSafeJSON(), ...session };
+  return { user: user.toSafeJSON(), ...session, checkoutUrl };
 }
 
 // --- Session issuance ----------------------------------------------------

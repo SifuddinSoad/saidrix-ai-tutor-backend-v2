@@ -8,6 +8,7 @@ import { Router } from "express";
 import Course from "../db/models/Course.js";
 import LectureCompletion from "../db/models/LectureCompletion.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import {
   asyncHandler,
   BadRequestError,
@@ -17,7 +18,7 @@ import { completeLecture } from "../services/progress.service.js";
 import { countTopics, progressPercent } from "../utils/courseProgress.js";
 
 const router = Router();
-router.use(authenticate);
+router.use(authenticate, requireActive);
 
 function isInt(n) {
   return Number.isInteger(n) && n >= 0;

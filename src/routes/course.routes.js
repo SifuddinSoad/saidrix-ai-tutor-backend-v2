@@ -8,6 +8,8 @@ import { randomUUID } from "crypto";
 import Course from "../db/models/Course.js";
 import KnowledgeDoc from "../db/models/KnowledgeDoc.js";
 import LectureCompletion from "../db/models/LectureCompletion.js";
+import Lecture from "../db/models/Lecture.js";
+import LectureProgress from "../db/models/LectureProgress.js";
 import {
   asyncHandler,
   BadRequestError,
@@ -19,12 +21,17 @@ import {
   courseTag,
 } from "../utils/courseProgress.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
 
 // Courses + knowledge are per-user; identity comes from the access token.
-router.use(authenticate);
+// IMPORTANT: scope to this router's OWN paths. The router is mounted at
+// "/api" (root), so a path-less `router.use(authenticate)` would fire
+// the auth check for every /api/* request — including /api/voice/*,
+// /api/lectures/*, /api/enrichment/* — and 401 them all.
+router.use(["/courses", "/knowledge"], authenticate, requireActive);
 
 // --- helper: clamp pagination query ---
 function paginate(query) {
@@ -103,6 +110,37 @@ router.get(
     const totalTopics = countTopics(course);
     const completedLocations = completions.map((c) => c.location);
 
+    // Per-topic progress %. Pull all lectures for the course + their
+    // LectureProgress docs for this user in two round-trips, then
+    // join in memory.
+    const lectures = await Lecture.find({ courseId: course.courseId })
+      .select("lectureId location blocks")
+      .lean();
+    const progressDocs = lectures.length
+      ? await LectureProgress.find({
+          userId: req.user.userId,
+          lectureId: { $in: lectures.map((l) => l.lectureId) },
+        }).lean()
+      : [];
+    const progressByLectureId = new Map(
+      progressDocs.map((p) => [p.lectureId, p])
+    );
+    const topicProgress = lectures.map((lec) => {
+      const p = progressByLectureId.get(lec.lectureId);
+      const total = lec.blocks?.length || 0;
+      const done = p?.completed
+        ? total
+        : Math.max(0, (p?.lastBlockIndex ?? -1) + 1);
+      return {
+        location: lec.location,
+        lectureId: lec.lectureId,
+        totalBlocks: total,
+        lastBlockIndex: p?.lastBlockIndex ?? -1,
+        percent: total ? Math.round((done / total) * 100) : 0,
+        completed: !!p?.completed,
+      };
+    });
+
     res.json({
       course: {
         ...course,
@@ -110,6 +148,7 @@ router.get(
         lessons: totalTopics,
         progress: progressPercent(completedLocations.length, totalTopics),
         completedLocations,
+        topicProgress,
       },
     });
   })

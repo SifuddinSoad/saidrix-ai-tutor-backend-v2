@@ -31,6 +31,18 @@ concept it illustrates. Walk through it step by step so the student can
 visualize it and grasp WHY it matters to the topic.
 `.trim();
 
+export const PICTURE_VISION_PROMPT = `
+${COMMON_RULES}
+
+ROLE: Picture Explainer (vision).
+You are shown the ACTUAL generated image for a lecture, plus the intended
+description as grounding context. Look at the real image and explain it to the
+listener: what it actually depicts, its key parts, how they relate, and what
+concept it illustrates. Walk through it step by step so the student can grasp
+WHY it matters to the topic. Describe what you genuinely see — if the image
+differs from the intended description, trust the image.
+`.trim();
+
 export const CODE_EXPLAINER_PROMPT = `
 ${COMMON_RULES}
 
@@ -114,6 +126,7 @@ the structure and meaning.
 
 export const EXPLAINER_PROMPTS = {
   picture: PICTURE_EXPLAINER_PROMPT,
+  pictureVision: PICTURE_VISION_PROMPT,
   code: CODE_EXPLAINER_PROMPT,
   text: TEXT_EXPLAINER_PROMPT,
   diagram: DIAGRAM_EXPLAINER_PROMPT,

@@ -6,7 +6,8 @@
 //   POST /register      {name,email}        -> emails a code
 //   POST /verify-email  {email,code}        -> { signupToken }
 //   POST /set-password  (Bearer signupToken){password}
-//   POST /select-plan   (Bearer signupToken){plan} -> session
+//   POST /select-plan   (Bearer signupToken){plan,cycle}
+//                       -> session (pending_payment) + checkoutUrl
 // Session:
 //   POST /login   POST /refresh   POST /logout
 //   POST /resend-code   GET /me
@@ -80,14 +81,26 @@ function authenticateSignup(req, _res, next) {
   }
 }
 
-// Issue session cookies + body for selectPlan/login/refresh results
-function sendSession(res, result, status = 200) {
+// Issue session cookies + body for selectPlan/login/refresh results.
+// `extra` merges additional fields (e.g. checkoutUrl) into the JSON body.
+function sendSession(res, result, status = 200, extra = {}) {
   setRefreshCookie(res, result.refreshToken);
   setCsrfCookie(res);
   return res.status(status).json({
     user: result.user,
     accessToken: result.accessToken,
+    ...extra,
   });
+}
+
+// First configured frontend origin (FRONTEND_ORIGIN is comma-separated),
+// used to build the LemonSqueezy post-checkout redirect URL.
+function frontendOrigin() {
+  const first = (process.env.FRONTEND_ORIGIN || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)[0];
+  return first || "http://localhost:5173";
 }
 
 // --- Step 1: register ----------------------------------------------------
@@ -157,13 +170,15 @@ router.post(
   "/select-plan",
   authenticateSignup,
   asyncHandler(async (req, res) => {
-    const { plan } = req.body || {};
+    const { plan, cycle } = req.body || {};
     const result = await authService.selectPlan({
       userId: req.signupUserId,
       plan,
+      cycle,
+      redirectUrl: `${frontendOrigin()}/signup/success`,
       ctx: reqCtx(req),
     });
-    sendSession(res, result, 200);
+    sendSession(res, result, 200, { checkoutUrl: result.checkoutUrl });
   })
 );
 

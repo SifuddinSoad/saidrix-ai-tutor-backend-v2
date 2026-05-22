@@ -137,9 +137,41 @@ export function parseCreateProjectCommand(text) {
 
 // ===========================================
 // [CreateRoutine] command parser
-//   [CreateRoutine] "<courseId>[,<courseId>...]" — dailyHours: X, startDate: YYYY-MM-DD
-// Returns null if the text is not a create-routine command.
+//   [CreateRoutine] "<courseId>[,<courseId>...]" — dailyHours: X,
+//                   totalDays: Y, readingTime: "evening 8-10pm",
+//                   startDate: YYYY-MM-DD
+// All k/v pairs after the dash are optional; the LLM emits this command
+// only AFTER asking the user for daily time, total days, and reading
+// time. Returns null if the text is not a create-routine command.
 // ===========================================
+
+// Loose finder: scans anywhere in the text. Used when intercepting an
+// LLM-emitted command from inside its own response (the LLM often wraps
+// the line in preamble despite the prompt forbidding it).
+export function findCreateRoutineCommand(text) {
+  if (typeof text !== "string") return null;
+  // Capture the courseId list + the trailing params (until newline or
+  // end of string). Note: NO anchors and no /s, so it matches inline.
+  const m = text.match(
+    /\[CreateRoutine\]\s*"([^"]+)"\s*(?:[—–\-]\s*([^\n\r]*))?/i,
+  );
+  if (!m) return null;
+  const courseIds = m[1].split(",").map((s) => s.trim()).filter(Boolean);
+  if (courseIds.length === 0) return null;
+  const rest = m[2] || "";
+  const hoursM = rest.match(/dailyHours:\s*([\d.]+)/i);
+  const totalM = rest.match(/totalDays:\s*(\d+)/i);
+  const dateM  = rest.match(/startDate:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
+  const readM  = rest.match(/readingTime:\s*"([^"]+)"/i) ||
+                 rest.match(/readingTime:\s*([^,]+?)(?:,|$)/i);
+  return {
+    courseIds,
+    dailyHours: hoursM ? Number(hoursM[1]) || 0 : 0,
+    totalDays:  totalM ? Number(totalM[1]) || 0 : 0,
+    readingTime: readM ? readM[1].trim() : "",
+    startDate:  dateM ? dateM[1] : null,
+  };
+}
 
 export function parseCreateRoutineCommand(text) {
   if (typeof text !== "string") return null;
@@ -156,11 +188,20 @@ export function parseCreateRoutineCommand(text) {
 
   const rest = head[2] || "";
   const hoursM = rest.match(/dailyHours:\s*([\d.]+)/i);
+  const totalM = rest.match(/totalDays:\s*(\d+)/i);
   const dateM = rest.match(/startDate:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/i);
-  const dailyHours = hoursM ? Number(hoursM[1]) || 1 : 1;
-  const startDate = dateM ? dateM[1] : null;
+  // readingTime accepts either "quoted string" or bare-until-comma value.
+  const readM = rest.match(/readingTime:\s*"([^"]+)"/i) ||
+    rest.match(/readingTime:\s*([^,]+?)(?:,|$)/i);
 
-  return { courseIds, dailyHours, startDate };
+  return {
+    courseIds,
+    // 0 here means "let the agent auto-derive from totalDays + course size"
+    dailyHours: hoursM ? Number(hoursM[1]) || 0 : 0,
+    totalDays:  totalM ? Number(totalM[1]) || 0 : 0,
+    readingTime: readM ? readM[1].trim() : "",
+    startDate:  dateM ? dateM[1] : null,
+  };
 }
 
 // ===========================================
@@ -355,10 +396,13 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         const result = await mod.invokeRoutineManager({
           courseIds: routineCmd.courseIds,
           dailyHours: routineCmd.dailyHours,
+          totalDays: routineCmd.totalDays,
+          readingTime: routineCmd.readingTime,
           startDate: routineCmd.startDate
             ? new Date(routineCmd.startDate)
             : new Date(),
           sessionId,
+          userId,
         });
         summary = (result?.summary || "").trim() || "(routine created)";
       } catch (err) {
@@ -398,13 +442,30 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
     const stream = await agent.stream(
       { messages: [humanMsg] },
       {
-        configurable: { thread_id: sessionId },
+        // userId is read by tools (list_my_courses) at invocation time.
+        configurable: { thread_id: sessionId, userId },
         streamMode: "messages",
       },
     );
 
     // Accumulate the full response for persistence
     let fullResponse = "";
+
+    // When the LLM itself emits a `[CreateRoutine] ...` line as its
+    // reply (instead of going through a frontend round-trip), we have to
+    // intercept it. Buffer the first ~32 chars before yielding any
+    // tokens so we can decide whether to suppress the stream and run
+    // the deterministic routine handler instead.
+    let routineBuffer = "";
+    let suppressTokens = false;
+    let routineCommandFound = null;
+    const COMMAND_SNIFF = 32;
+    function looksLikeRoutineStart(s) {
+      const trimmed = s.trimStart();
+      // Could still be growing; allow partial match.
+      return /^\[CreateRoutine\]?/i.test(trimmed) &&
+        "[CreateRoutine]".startsWith(trimmed.slice(0, "[CreateRoutine]".length));
+    }
 
     // Track tool calls that have started so we can correlate start → result
     // and avoid duplicate `tool_start` events as tool_call_chunks stream in.
@@ -453,6 +514,28 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
               ? chunk.content
               : JSON.stringify(chunk.content);
           fullResponse += token;
+
+          if (suppressTokens) {
+            // Already decided to swallow this turn's text.
+            continue;
+          }
+
+          if (routineBuffer.length < COMMAND_SNIFF) {
+            routineBuffer += token;
+            if (looksLikeRoutineStart(routineBuffer)) {
+              // Still maybe a command — keep buffering until we are sure.
+              if (/\[CreateRoutine\]\s*"/i.test(routineBuffer)) {
+                suppressTokens = true; // confirmed; never yield this turn
+                continue;
+              }
+              if (routineBuffer.length < COMMAND_SNIFF) continue;
+            }
+            // Not a routine command — flush whatever we buffered.
+            yield { type: "token", content: routineBuffer };
+            routineBuffer = "";
+            continue;
+          }
+
           yield { type: "token", content: token };
         }
       }
@@ -505,6 +588,76 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
           durationMs,
         };
       }
+    }
+
+    // ---- Intercept LLM-emitted [CreateRoutine] command ----
+    // The buffered/suppressed tokens stay in fullResponse; scan it
+    // anywhere (LLM often wraps the line in preamble despite the
+    // prompt). If found, run the routine-manager deterministically.
+    if (/\[CreateRoutine\]\s*"/.test(fullResponse)) {
+      routineCommandFound = findCreateRoutineCommand(fullResponse);
+      logger.info(
+        `[Agent] LLM emitted [CreateRoutine]; parsed=${!!routineCommandFound}` +
+          (routineCommandFound
+            ? ` courseIds=${routineCommandFound.courseIds.join(",")} totalDays=${routineCommandFound.totalDays} readingTime="${routineCommandFound.readingTime}"`
+            : "")
+      );
+    }
+
+    if (routineCommandFound) {
+      const toolCallId = randomUUID();
+      const startedAt = new Date();
+      yield { type: "tool_start", toolCallId, toolName: "create_routine" };
+
+      let summary = "";
+      try {
+        const mod = await import("../routine-manager/graph.js");
+        // Validate startDate isn't in the past (LLM sometimes hallucinates).
+        let startDate = routineCommandFound.startDate
+          ? new Date(routineCommandFound.startDate)
+          : new Date();
+        if (isNaN(startDate.getTime()) || startDate < new Date(Date.now() - 86400e3)) {
+          startDate = new Date();
+        }
+        const result = await mod.invokeRoutineManager({
+          courseIds: routineCommandFound.courseIds,
+          dailyHours: routineCommandFound.dailyHours,
+          totalDays: routineCommandFound.totalDays,
+          readingTime: routineCommandFound.readingTime,
+          startDate,
+          sessionId,
+          userId,
+        });
+        summary = (result?.summary || "").trim() || "(routine created)";
+      } catch (err) {
+        logger.error(`[Agent] inline create_routine failed: ${err.message}`);
+        summary = `❌ Routine toiri kora gelo na: ${err.message}`;
+      }
+      const durationMs = new Date() - startedAt;
+      yield {
+        type: "tool_result",
+        toolCallId,
+        toolName: "create_routine",
+        content: summary,
+        durationMs,
+      };
+
+      const { AIMessage } = await import("@langchain/core/messages");
+      const aiMsg = new AIMessage({ content: summary });
+      if (messageId) aiMsg.additional_kwargs = { messageId };
+      await sessionCache.append(sessionId, aiMsg);
+
+      yield {
+        type: "end",
+        content: summary,
+        prompts: [],
+        courseRefs: [],
+        proposal: null,
+      };
+      logger.info(
+        `[Agent] [CreateRoutine] intercepted from LLM output (${durationMs}ms)`,
+      );
+      return;
     }
 
     let cleanedText;

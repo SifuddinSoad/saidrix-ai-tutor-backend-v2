@@ -113,6 +113,59 @@ export const webSearchTool = tool(
 );
 
 // ===========================================
+// List-My-Courses Tool
+// Used by the chat agent at the START of a routine flow so it can show
+// the user their actual courses (by title) to pick from. Reads userId
+// from the RunnableConfig that chat/graph.js passes per invocation.
+// ===========================================
+
+function countTopics(course) {
+  let n = 0;
+  for (const ch of course.chapters || [])
+    for (const mod of ch.modules || [])
+      for (const sm of mod.sub_modules || [])
+        n += (sm.topics || []).length;
+  return n;
+}
+
+export const listMyCoursesTool = tool(
+  async (_input, config) => {
+    try {
+      const userId =
+        config?.configurable?.userId ||
+        config?.metadata?.userId;
+      if (!userId) {
+        return "ERROR: no userId in tool config (cannot list courses).";
+      }
+      const Course = (await import("../../db/models/Course.js")).default;
+      const courses = await Course.find({ userId })
+        .select("courseId course_title chapters createdAt")
+        .sort({ createdAt: -1 })
+        .lean();
+      if (!courses.length) {
+        return "The user has no courses yet. Tell them in one sentence to create a course first before making a routine.";
+      }
+      const out = courses.map((c) => ({
+        courseId: c.courseId,
+        title: c.course_title,
+        topicCount: countTopics(c),
+      }));
+      logger.info(`[list_my_courses] Returned ${out.length} courses for user ${userId}`);
+      return JSON.stringify(out);
+    } catch (err) {
+      logger.error("[list_my_courses] Error:", err.message);
+      return `Failed to list courses: ${err.message}`;
+    }
+  },
+  {
+    name: "list_my_courses",
+    description:
+      "List the current user's existing courses (courseId, title, topicCount). Call this FIRST when the user asks for a routine / study plan, so you can offer them their real courses as options. Takes no arguments.",
+    schema: z.object({}),
+  }
+);
+
+// ===========================================
 // Course-Maker Tool
 // Bridges chat agent to course-maker agent
 // ===========================================
@@ -206,7 +259,7 @@ export function createCustomTool(config) {
 // Returns the complete list of tools (built-in + custom)
 
 export function getTools() {
-  return [webSearchTool, ragSearchTool, createCourseTool, ...customTools];
+  return [webSearchTool, ragSearchTool, createCourseTool, listMyCoursesTool, ...customTools];
 }
 
-export default { webSearchTool, ragSearchTool, createCourseTool, createCustomTool, getTools };
+export default { webSearchTool, ragSearchTool, createCourseTool, listMyCoursesTool, createCustomTool, getTools };

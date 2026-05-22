@@ -22,7 +22,7 @@ import logger from "../utils/logger.js";
 
 // ---- Checkout ----
 
-export async function startCheckout({ userId, plan, cycle }) {
+export async function startCheckout({ userId, plan, cycle, redirectUrl }) {
   if (!PAID_PLANS.includes(plan)) throw new BadRequestError(`Unknown plan: ${plan}`);
   if (!BILLING_CYCLES.includes(cycle)) throw new BadRequestError(`Unknown billing cycle: ${cycle}`);
   const variantId = getVariantId(plan, cycle);
@@ -36,6 +36,7 @@ export async function startCheckout({ userId, plan, cycle }) {
     userId: user.userId,
     email: user.email,
     name: user.name,
+    redirectUrl,
   });
   return { url };
 }
@@ -154,6 +155,12 @@ export async function listInvoices(userId) {
 
   const body = await ls.listSubscriptionInvoices(subId, { perPage: 50 });
   const items = Array.isArray(body?.data) ? body.data : [];
+  // This endpoint can't sort, so order newest-first here.
+  items.sort((a, b) => {
+    const ta = new Date(a?.attributes?.created_at || 0).getTime();
+    const tb = new Date(b?.attributes?.created_at || 0).getTime();
+    return tb - ta;
+  });
   const invoices = items.map((i) => {
     const a = i?.attributes || {};
     return {
@@ -233,6 +240,7 @@ function extractSubAttrs(data) {
     status:           a.status || null,
     renewsAt:         a.renews_at ? new Date(a.renews_at) : null,
     endsAt:           a.ends_at ? new Date(a.ends_at) : null,
+    trialEndsAt:      a.trial_ends_at ? new Date(a.trial_ends_at) : null,
     cardBrand:        a.card_brand || "",
     cardLastFour:     a.card_last_four || "",
     portalUrl:        a.urls?.customer_portal || "",
@@ -240,15 +248,16 @@ function extractSubAttrs(data) {
   };
 }
 
-async function onSubscriptionCreated(user, data) {
-  const s = extractSubAttrs(data);
-  const mapped = planFromVariant(s.variantId);
-  if (!mapped) {
-    logger.warn("[Billing] subscription_created: unknown variant", { variantId: s.variantId });
-    return { ok: false, reason: "unknown_variant" };
-  }
+// Persist an active/trialing subscription onto the user. Shared by the
+// subscription_created webhook and the pull-based reconcile so both paths
+// produce identical state.
+async function applyActiveSubscription(user, s, mapped) {
+  const onTrial = s.status === "on_trial";
   user.plan = mapped.plan;
-  user.status = "active";
+  // A card-on-file trial keeps the user in `trialing` until the first
+  // payment (subscription_payment_success) flips them to `active`.
+  user.status = onTrial ? "trialing" : "active";
+  user.trialEndsAt = onTrial ? s.trialEndsAt : null;
   user.subscription = {
     lemonCustomerId: s.customerId,
     lemonSubscriptionId: s.subscriptionId,
@@ -264,8 +273,80 @@ async function onSubscriptionCreated(user, data) {
   };
   await user.save();
   await ensureCounter(user);
-  logger.info(`[Billing] subscription_created -> ${user.userId} plan=${user.plan}`);
+  return user;
+}
+
+async function onSubscriptionCreated(user, data) {
+  const s = extractSubAttrs(data);
+  const mapped = planFromVariant(s.variantId);
+  if (!mapped) {
+    logger.warn("[Billing] subscription_created: unknown variant", { variantId: s.variantId });
+    return { ok: false, reason: "unknown_variant" };
+  }
+  await applyActiveSubscription(user, s, mapped);
+  logger.info(`[Billing] subscription_created -> ${user.userId} plan=${user.plan} status=${user.status}`);
   return { ok: true };
+}
+
+// ---- Reconcile (pull-based, no webhook required) ----
+//
+// Called when a user returns from the hosted checkout. Pulls their latest
+// subscription straight from LemonSqueezy and applies it, so access is
+// granted even if the inbound webhook is delayed or can't reach this
+// backend (e.g. local dev). Idempotent and safe to call repeatedly.
+export async function syncSubscriptionFromLemon(userId) {
+  const userDoc = await User.findOne({ userId });
+  if (!userDoc) throw new NotFoundError("User not found");
+
+  // Already provisioned — nothing to pull.
+  if (
+    userDoc.subscription?.lemonSubscriptionId &&
+    ["trialing", "active"].includes(userDoc.status)
+  ) {
+    return getBillingState(userId);
+  }
+
+  let body;
+  try {
+    body = await ls.listSubscriptions({ email: userDoc.email });
+  } catch (err) {
+    logger.warn(`[Billing] reconcile: LS lookup failed for ${userId}: ${err.message}`);
+    return getBillingState(userId);
+  }
+
+  const items = Array.isArray(body?.data) ? body.data : [];
+  // The /subscriptions endpoint can't sort, so order newest-first here.
+  items.sort((a, b) => {
+    const ta = new Date(a?.attributes?.created_at || 0).getTime();
+    const tb = new Date(b?.attributes?.created_at || 0).getTime();
+    return tb - ta;
+  });
+  // Prefer a live subscription; fall back to the most recent one.
+  const live = items.find((it) =>
+    ["on_trial", "active", "past_due", "paused"].includes(it?.attributes?.status)
+  );
+  const chosen = live || items[0];
+  if (!chosen) {
+    logger.info(`[Billing] reconcile: no subscription found for ${userId}`);
+    return getBillingState(userId);
+  }
+
+  const s = extractSubAttrs(chosen);
+  // Map by variant; fall back to the plan/cycle the user chose at signup
+  // when the variant isn't recognized (e.g. env variant IDs not wired).
+  const mapped =
+    planFromVariant(s.variantId) ||
+    (userDoc.selectedPlan && PAID_PLANS.includes(userDoc.selectedPlan)
+      ? { plan: userDoc.selectedPlan, cycle: userDoc.selectedCycle || "monthly" }
+      : null);
+  if (!mapped) {
+    logger.warn(`[Billing] reconcile: unmappable variant ${s.variantId} for ${userId}`);
+    return getBillingState(userId);
+  }
+
+  await applyActiveSubscription(userDoc, s, mapped);
+  logger.info(`[Billing] reconcile -> ${userId} plan=${userDoc.plan} status=${userDoc.status}`);
+  return getBillingState(userId);
 }
 
 async function onSubscriptionUpdated(user, data) {

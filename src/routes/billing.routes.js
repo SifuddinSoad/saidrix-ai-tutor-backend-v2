@@ -44,6 +44,16 @@ router.get(
   })
 );
 
+// Pull-based reconcile — used by the post-checkout return page to activate
+// access without waiting for the (possibly unreachable) webhook.
+router.post(
+  "/sync",
+  asyncHandler(async (req, res) => {
+    const out = await billingService.syncSubscriptionFromLemon(req.user.userId);
+    res.json(out);
+  })
+);
+
 router.get(
   "/portal",
   asyncHandler(async (req, res) => {

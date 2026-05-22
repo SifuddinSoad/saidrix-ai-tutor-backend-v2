@@ -16,11 +16,18 @@ import Lecture from "../db/models/Lecture.js";
 import Job from "../db/models/Job.js";
 import { invokeLectureMaker } from "../agents/lecture-maker/graph.js";
 import { explainLectureToDB } from "../agents/lecture-explainer/orchestrator.js";
+import { ensureLectureImages } from "../agents/lecture-explainer/imageEnricher.js";
+import LectureProgress from "../db/models/LectureProgress.js";
+import LectureCompletion from "../db/models/LectureCompletion.js";
+import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import {
   asyncHandler,
   BadRequestError,
+  ForbiddenError,
   NotFoundError,
 } from "../errors/index.js";
+import { isLocationUnlocked } from "../utils/courseProgress.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
@@ -45,6 +52,45 @@ async function processLectureJob(jobId, params) {
     );
 
     const { courseId, location, userId } = params;
+
+    // --- Reuse existing lecture if one already exists for this topic ---
+    // Avoids paying LLM cost + 30-60s wait on every entry. Enrichment
+    // chain is still kicked off below; it's idempotent (version-aware
+    // cache → no-op when segments are current).
+    const existing = await Lecture.findOne({
+      courseId,
+      "location.chapter_index": location.chapter_index,
+      "location.module_index": location.module_index,
+      "location.sub_module_index": location.sub_module_index,
+      "location.topic_index": location.topic_index,
+    }).lean();
+
+    if (existing) {
+      await Job.findOneAndUpdate(
+        { jobId },
+        {
+          status: "completed",
+          completedAt: new Date(),
+          "progress.percent": 100,
+          "progress.message": "Reusing existing lecture",
+          relatedIds: { lectureId: existing.lectureId },
+        }
+      );
+      explainLectureToDB(existing, {}).catch((err) =>
+        logger.error(
+          `[Job ${jobId}] Background re-enrich failed for ${existing.lectureId}: ${err.message}`
+        )
+      );
+      ensureLectureImages(existing.lectureId).catch((err) =>
+        logger.error(
+          `[Job ${jobId}] Image enrich failed for ${existing.lectureId}: ${err.message}`
+        )
+      );
+      logger.info(
+        `[Job ${jobId}] Reused existing lecture ${existing.lectureId} (skipped generation)`
+      );
+      return;
+    }
 
     const course = await Course.findOne({ courseId }).lean();
     if (!course) {
@@ -116,6 +162,11 @@ async function processLectureJob(jobId, params) {
             `[Job ${jobId}] Enrichment failed for ${result.lectureId}: ${err.message}`
           )
         );
+      ensureLectureImages(result.lectureId).catch((err) =>
+        logger.error(
+          `[Job ${jobId}] Image enrich failed for ${result.lectureId}: ${err.message}`
+        )
+      );
     } else {
       logger.warn(
         `[Job ${jobId}] No lecture object returned — skipping enrichment chain`
@@ -139,6 +190,8 @@ async function processLectureJob(jobId, params) {
 // --- POST /lectures/generate ---
 router.post(
   "/generate",
+  authenticate,
+  requireActive,
   asyncHandler(async (req, res) => {
     const {
       courseId,
@@ -146,8 +199,8 @@ router.post(
       module_index,
       sub_module_index,
       topic_index,
-      userId = "default",
     } = req.body || {};
+    const userId = req.user.userId;
 
     if (
       !courseId ||
@@ -164,6 +217,22 @@ router.post(
     const course = await Course.findOne({ courseId }).lean();
     if (!course) {
       throw new NotFoundError("Course not found");
+    }
+
+    // Sequential unlock: block generating a lecture whose prior topics
+    // aren't all completed yet (a user could otherwise bypass the locked
+    // roadmap UI by hitting this endpoint directly).
+    const completed = await LectureCompletion.find({ userId, courseId })
+      .select("location -_id")
+      .lean();
+    const targetLoc = {
+      chapter_index,
+      module_index,
+      sub_module_index,
+      topic_index,
+    };
+    if (!isLocationUnlocked(course, completed.map((c) => c.location), targetLoc)) {
+      throw new ForbiddenError("Complete the previous lecture first");
     }
 
     const jobId = randomUUID();
@@ -331,6 +400,64 @@ router.delete(
       throw new NotFoundError("Job not found");
     }
     res.json({ message: "Job deleted", jobId: req.params.jobId });
+  })
+);
+
+// --- GET /lectures/:lectureId/progress ---
+// Returns the current user's resume point for this lecture. Defaults
+// to { lastBlockIndex: -1, completed: false } if no progress exists.
+router.get(
+  "/:lectureId/progress",
+  authenticate,
+  requireActive,
+  asyncHandler(async (req, res) => {
+    const { lectureId } = req.params;
+    const userId = req.user.userId;
+    const prog = await LectureProgress.findOne({ userId, lectureId }).lean();
+    if (!prog) {
+      return res.json({
+        progress: {
+          lectureId, userId,
+          lastBlockIndex: -1, totalBlocks: 0,
+          completed: false, completedAt: null,
+        },
+      });
+    }
+    res.json({ progress: prog });
+  })
+);
+
+// --- POST /lectures/:lectureId/progress ---
+// Manual checkpoint save. Body: { lastBlockIndex, totalBlocks?, completed? }.
+// The voice worker already writes per-block — this is for the End Class
+// button and other client-initiated saves.
+router.post(
+  "/:lectureId/progress",
+  authenticate,
+  requireActive,
+  asyncHandler(async (req, res) => {
+    const { lectureId } = req.params;
+    const userId = req.user.userId;
+    const { lastBlockIndex, totalBlocks, completed } = req.body || {};
+
+    if (typeof lastBlockIndex !== "number") {
+      throw new BadRequestError("lastBlockIndex (number) is required");
+    }
+
+    const update = { lastBlockIndex };
+    if (typeof totalBlocks === "number") update.totalBlocks = totalBlocks;
+    if (completed === true) {
+      update.completed = true;
+      update.completedAt = new Date();
+    }
+
+    const prog = await LectureProgress.findOneAndUpdate(
+      { userId, lectureId },
+      { $set: update, $setOnInsert: { userId, lectureId } },
+      { new: true, upsert: true }
+    ).lean();
+
+    res.json({ progress: prog });
   })
 );
 

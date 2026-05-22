@@ -23,8 +23,16 @@ const locationSchema = new Schema(
 
 // --- A single scheduled item within a day ---
 
+// Each scheduled task gets its own stable ID so the UI can mark it
+// done / delete it without depending on array index. `done` + `doneAt`
+// persist progress across sessions (no more localStorage).
 const itemSchema = new Schema(
   {
+    taskId: {
+      type: String,
+      required: true,
+      // Unique-per-routine; not globally unique.
+    },
     type: {
       type: String,
       enum: ["lecture", "project_deadline"],
@@ -37,6 +45,10 @@ const itemSchema = new Schema(
     // Present for `project_deadline` items
     projectId: { type: String, default: undefined },
     estimated_minutes: { type: Number, default: 0 },
+
+    // Progress
+    done: { type: Boolean, default: false },
+    doneAt: { type: Date, default: null },
   },
   { _id: false }
 );
@@ -69,6 +81,12 @@ const routineSchema = new Schema(
     // Inputs used to build the plan
     startDate: { type: Date, required: true },
     dailyHours: { type: Number, default: 1 },
+    // Target completion window in days (LLM uses this as the upper
+    // bound when packing topics across days). 0 = no constraint.
+    totalDays: { type: Number, default: 0 },
+    // Free-text reading-time hint, e.g. "evening 8-10pm", "after Fajr".
+    // Stored verbatim for display; not parsed.
+    readingTime: { type: String, default: "" },
 
     // The generated schedule
     days: { type: [daySchema], default: [] },

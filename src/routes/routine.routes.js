@@ -20,12 +20,13 @@ import {
   NotFoundError,
 } from "../errors/index.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
 
 // Routines are per-user; identity comes from the access token.
-router.use(authenticate);
+router.use(authenticate, requireActive);
 
 function paginate(query) {
   const page = Math.max(Number(query.page) || 1, 1);
@@ -40,6 +41,8 @@ router.post(
     const {
       courseIds,
       dailyHours = 1,
+      totalDays = 0,
+      readingTime = "",
       startDate,
       sessionId = null,
     } = req.body || {};
@@ -77,6 +80,8 @@ router.post(
       userId,
       courseIds: ids,
       dailyHours: Number(dailyHours),
+      totalDays: Number(totalDays) || 0,
+      readingTime: String(readingTime || "").trim(),
       startDate: start,
       sessionId,
     });
@@ -145,6 +150,60 @@ router.delete(
     }
 
     res.json({ message: "Routine deleted", routineId: req.params.routineId });
+  })
+);
+
+// --- PATCH /routines/:routineId/tasks/:taskId ---
+// Toggle (or explicitly set) the `done` flag on a single task inside the
+// routine. Body: { done: boolean }. If `done` is omitted, the current
+// value is flipped.
+router.patch(
+  "/:routineId/tasks/:taskId",
+  asyncHandler(async (req, res) => {
+    const { routineId, taskId } = req.params;
+    const userId = req.user.userId;
+
+    const routine = await Routine.findOne({ routineId, userId });
+    if (!routine) throw new NotFoundError("Routine not found");
+
+    let target = null;
+    for (const day of routine.days) {
+      const it = (day.items || []).find((x) => x.taskId === taskId);
+      if (it) { target = it; break; }
+    }
+    if (!target) throw new NotFoundError("Task not found in this routine");
+
+    const next =
+      typeof req.body?.done === "boolean" ? req.body.done : !target.done;
+    target.done = next;
+    target.doneAt = next ? new Date() : null;
+    await routine.save();
+
+    res.json({ taskId, done: target.done, doneAt: target.doneAt });
+  })
+);
+
+// --- DELETE /routines/:routineId/tasks/:taskId ---
+// Remove a single task from its day's items array.
+router.delete(
+  "/:routineId/tasks/:taskId",
+  asyncHandler(async (req, res) => {
+    const { routineId, taskId } = req.params;
+    const userId = req.user.userId;
+
+    const routine = await Routine.findOne({ routineId, userId });
+    if (!routine) throw new NotFoundError("Routine not found");
+
+    let removed = false;
+    for (const day of routine.days) {
+      const before = day.items.length;
+      day.items = day.items.filter((x) => x.taskId !== taskId);
+      if (day.items.length !== before) { removed = true; break; }
+    }
+    if (!removed) throw new NotFoundError("Task not found in this routine");
+
+    await routine.save();
+    res.json({ message: "Task deleted", taskId });
   })
 );
 

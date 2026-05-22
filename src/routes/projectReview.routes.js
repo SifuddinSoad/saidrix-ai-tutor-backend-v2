@@ -20,6 +20,7 @@ import { uploadBuffer } from "../services/r2.client.js";
 import { processProjectReviewJob } from "../agents/project-reviewer/job.js";
 import { MAX_ZIP_BYTES } from "../config/review.config.js";
 import { authenticate } from "../middleware/authenticate.js";
+import { requireActive } from "../middleware/requirePlan.js";
 import {
   asyncHandler,
   BadRequestError,
@@ -32,8 +33,8 @@ import logger from "../utils/logger.js";
 export const nestedRouter = Router({ mergeParams: true });
 export const flatRouter = Router();
 
-nestedRouter.use(authenticate);
-flatRouter.use(authenticate);
+nestedRouter.use(authenticate, requireActive);
+flatRouter.use(authenticate, requireActive);
 
 // Helper: assert the project exists and belongs to the caller.
 async function loadOwnedProject(projectId, userId) {

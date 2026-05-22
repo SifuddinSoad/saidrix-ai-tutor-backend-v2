@@ -52,9 +52,10 @@ async function call(path, init = {}) {
  * @param {string} opts.userId         our internal userId — round-tripped via custom_data
  * @param {string} opts.email
  * @param {string} [opts.name]
+ * @param {string} [opts.redirectUrl]  where LS sends the user after a successful checkout
  * @returns {Promise<string>}          checkout URL the user is redirected to
  */
-export async function createCheckoutUrl({ variantId, userId, email, name }) {
+export async function createCheckoutUrl({ variantId, userId, email, name, redirectUrl }) {
   const storeId = process.env.LEMONSQUEEZY_STORE_ID;
   if (!storeId) throw new UpstreamError("LEMONSQUEEZY_STORE_ID not set");
 
@@ -67,6 +68,9 @@ export async function createCheckoutUrl({ variantId, userId, email, name }) {
           name: name || undefined,
           custom: { userId },
         },
+        ...(redirectUrl
+          ? { product_options: { redirect_url: redirectUrl } }
+          : {}),
       },
       relationships: {
         store:   { data: { type: "stores",   id: String(storeId) } },
@@ -87,6 +91,24 @@ export async function createCheckoutUrl({ variantId, userId, email, name }) {
 
 export async function getSubscription(subscriptionId) {
   return call(`/subscriptions/${subscriptionId}`);
+}
+
+/**
+ * List subscriptions for a customer email, newest first. Used to reconcile
+ * a user's subscription on return from checkout when the webhook hasn't
+ * arrived yet (or can't reach a local dev backend). Returns the raw LS
+ * response (paginated); `data` is an array of subscription resources.
+ */
+export async function listSubscriptions({ email, perPage = 50 } = {}) {
+  // NOTE: the /subscriptions endpoint does NOT allow `sort` (returns 400).
+  // Caller sorts the results.
+  const qs = new URLSearchParams({
+    "page[size]": String(perPage),
+  });
+  if (email) qs.set("filter[user_email]", String(email).toLowerCase());
+  const storeId = process.env.LEMONSQUEEZY_STORE_ID;
+  if (storeId) qs.set("filter[store_id]", String(storeId));
+  return call(`/subscriptions?${qs.toString()}`);
 }
 
 /**
@@ -122,11 +144,11 @@ export async function resumeSubscription(subscriptionId) {
  * Returns the raw LS response (paginated).
  */
 export async function listSubscriptionInvoices(subscriptionId, { perPage = 25, page = 1 } = {}) {
+  // NOTE: `sort` is not allowed on this endpoint (returns 400) — caller sorts.
   const qs = new URLSearchParams({
     "filter[subscription_id]": String(subscriptionId),
     "page[size]": String(perPage),
     "page[number]": String(page),
-    sort: "-created_at",
   });
   return call(`/subscription-invoices?${qs.toString()}`);
 }

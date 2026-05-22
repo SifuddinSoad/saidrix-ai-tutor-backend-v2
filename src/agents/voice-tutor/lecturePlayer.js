@@ -8,6 +8,7 @@
 
 import Lecture from "../../db/models/Lecture.js";
 import VoiceSession from "../../db/models/VoiceSession.js";
+import LectureProgress from "../../db/models/LectureProgress.js";
 import { lectureToSpeechPlan } from "./lectureReader.js";
 import { splitSentences } from "./textSplit.js";
 import { prepareUnit, emitUnit } from "./speakUnit.js";
@@ -24,6 +25,7 @@ import {
   sendTranscript,
 } from "./dataChannel.js";
 import { PlayerControl } from "./playerControl.js";
+import { completeLecture } from "../../services/progress.service.js";
 import logger from "../../utils/logger.js";
 
 /**
@@ -148,9 +150,76 @@ export async function playLecture(ctx) {
   // frontend re-anchors its caption clock on every segment_start.
   const segCounter = { n: 0 };
 
+  // Resume: voice.routes.js writes the requested start block into
+  // VoiceSession.currentBlockIndex at creation time. Find the first
+  // segment whose blockIndex >= startBlockIdx so we skip past completed
+  // blocks. -2/-1 (title/summary) segments are ALWAYS played at start
+  // if we're resuming from block 0; otherwise they're skipped too.
+  const startBlockIdx = Math.max(0, Number(session.currentBlockIndex) || 0);
+  const sessionUserId = session.userId;
+  if (!sessionUserId) {
+    logger.warn(
+      `[LecturePlayer] VoiceSession ${sessionId} has no userId — LectureProgress writes will be skipped`
+    );
+  }
+
+  function findResumeSegIdx(startBlock) {
+    if (startBlock <= 0) return 0;
+    for (let i = 0; i < expected.length; i++) {
+      if ((expected[i].blockIndex ?? -1) >= startBlock) return i;
+    }
+    return expected.length - 1;
+  }
+
+  async function saveProgress(blockIndex, { completed = false } = {}) {
+    if (!sessionUserId) return;
+    try {
+      await LectureProgress.findOneAndUpdate(
+        { userId: sessionUserId, lectureId },
+        {
+          $set: {
+            lastBlockIndex: blockIndex,
+            totalBlocks: lecture.blocks?.length || 0,
+            ...(completed ? { completed: true, completedAt: new Date() } : {}),
+          },
+          $setOnInsert: { userId: sessionUserId, lectureId },
+        },
+        { upsert: true }
+      );
+    } catch (err) {
+      logger.warn(`[LecturePlayer] LectureProgress save failed: ${err.message}`);
+    }
+
+    // On completion, also record the authoritative topic completion
+    // (awards XP + unlocks the next lecture). Idempotent via unique index,
+    // so replaying a finished lecture is a no-op. Independent of the
+    // frontend's own completeLecture call so the unlock never depends on
+    // the client staying on the page until the end.
+    if (completed && lecture.courseId && lecture.location) {
+      const l = lecture.location;
+      try {
+        await completeLecture(sessionUserId, lecture.courseId, {
+          chapter: l.chapter_index,
+          module: l.module_index,
+          sub_module: l.sub_module_index,
+          topic: l.topic_index,
+        });
+      } catch (err) {
+        logger.warn(
+          `[LecturePlayer] LectureCompletion save failed: ${err.message}`
+        );
+      }
+    }
+  }
+
   try {
     // --- Iterate segments with index pointer (so we can jump/repeat) ---
-    let segIdx = 0;
+    let segIdx = findResumeSegIdx(startBlockIdx);
+    if (segIdx > 0) {
+      logger.info(
+        `[LecturePlayer] Resuming session ${sessionId} from segment ${segIdx} (block ≥ ${startBlockIdx})`
+      );
+    }
     while (segIdx < total) {
       // Block on pause / Q&A before starting a new segment
       await playerControl.waitIfPaused();
@@ -202,12 +271,13 @@ export async function playLecture(ctx) {
         playerControl.clearSegmentFlags();
       }
 
-      // Update checkpoint
+      // Update checkpoint (per-session AND per-user resume doc)
       if (blockIndex >= 0) {
         await VoiceSession.updateOne(
           { sessionId },
           { currentBlockIndex: blockIndex, currentCharOffset: 0 }
         );
+        await saveProgress(blockIndex);
       }
 
       segIdx += 1;
@@ -220,6 +290,8 @@ export async function playLecture(ctx) {
       { sessionId },
       { state: "completed", endedAt: new Date() }
     );
+    const lastBlock = (lecture.blocks?.length || 1) - 1;
+    await saveProgress(lastBlock, { completed: true });
     logger.info(`[LecturePlayer] Completed session ${sessionId}`);
   } catch (err) {
     logger.error("[LecturePlayer] Fatal error:", err.message);
@@ -264,15 +336,32 @@ async function playSegment({
   (async () => {
     for (const s of sentences) {
       if (playerControl.isAborting()) break;
-      let prepared;
-      try {
-        prepared = await prepareUnit(s, { blockIndex });
-      } catch (err) {
-        logger.error(
-          `[LecturePlayer] TTS prepare failed (block ${blockIndex}): ${err.message}`
-        );
-        continue; // skip this sentence, keep playback alive
+      // Single retry with 500ms backoff for transient network drops
+      // ("terminated" / ECONNRESET / fetch failed / aborted). These are
+      // the bulk of TTS failures and a quick re-fetch usually clears
+      // them. Hard failures still fall through to the skip branch.
+      let prepared = null;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          prepared = await prepareUnit(s, { blockIndex });
+          break;
+        } catch (err) {
+          const msg = err?.message || String(err);
+          const transient = /terminated|ECONNRESET|fetch failed|aborted|socket hang up/i.test(msg);
+          const isLast = attempt === 1;
+          if (isLast || !transient) {
+            logger.error(
+              `[LecturePlayer] TTS prepare failed (block ${blockIndex}, attempt ${attempt + 1}): ${msg}`
+            );
+            break;
+          }
+          logger.warn(
+            `[LecturePlayer] TTS prepare retry (block ${blockIndex}): ${msg}`
+          );
+          await new Promise((r) => setTimeout(r, 500));
+        }
       }
+      if (!prepared) continue; // skip this sentence, keep playback alive
       const ok = await queue.push(prepared);
       if (!ok) break; // queue closed (segment aborted)
     }
