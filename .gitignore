@@ -54,3 +54,6 @@ Thumbs.db
 dist/
 build/
 coverage/
+
+# Superpowers brainstorm scratch
+.superpowers/
