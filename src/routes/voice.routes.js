@@ -158,7 +158,7 @@ router.get(
       sessionId: req.params.sessionId,
     }).lean();
 
-    if (!session) {
+    if (!session || session.userId !== req.user.userId) {
       throw new NotFoundError("Voice session not found");
     }
 
@@ -176,12 +176,12 @@ router.get(
   authenticate,
   requireActive,
   asyncHandler(async (req, res) => {
-    const { userId, lectureId, state } = req.query;
+    const { lectureId, state } = req.query;
     const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
 
-    const filter = {};
-    if (userId) filter.userId = userId;
+    // Always scope to the caller; never trust a client-supplied userId.
+    const filter = { userId: req.user.userId };
     if (lectureId) filter.lectureId = lectureId;
     if (state) filter.state = state;
 
@@ -219,7 +219,7 @@ router.post(
   requireActive,
   asyncHandler(async (req, res) => {
     const result = await VoiceSession.findOneAndUpdate(
-      { sessionId: req.params.sessionId },
+      { sessionId: req.params.sessionId, userId: req.user.userId },
       { state: "ended", endedAt: new Date() },
       { new: true }
     );
@@ -243,6 +243,7 @@ router.delete(
   asyncHandler(async (req, res) => {
     const result = await VoiceSession.deleteOne({
       sessionId: req.params.sessionId,
+      userId: req.user.userId,
     });
 
     if (result.deletedCount === 0) {

@@ -205,7 +205,8 @@
       "Bash(node --check src/routes/billing.routes.js)",
       "Bash(node --check src/utils/emailTemplates.js)",
       "Bash(node -e \"import\\('./src/utils/emailTemplates.js'\\).then\\(m=>{const v=m.verificationEmail\\('Sifuddin','482913'\\);const bad=/accentSoft|undefined|#6d28d9|#ede9fe/.test\\(v.html\\);console.log\\('subject:',v.subject\\);console.log\\('stale refs:',bad\\);console.log\\('has green:', v.html.includes\\('#2DFD7E'\\)\\);}\\)\")",
-      "Bash(node -e \"import\\('./src/utils/emailTemplates.js'\\).then\\(m=>{const v=m.verificationEmail\\('Sifuddin Soad','247430'\\);require\\('fs'\\).writeFileSync\\('frontend/public/_email_preview.html',v.html\\);console.log\\('written'\\);}\\)\")"
+      "Bash(node -e \"import\\('./src/utils/emailTemplates.js'\\).then\\(m=>{const v=m.verificationEmail\\('Sifuddin Soad','247430'\\);require\\('fs'\\).writeFileSync\\('frontend/public/_email_preview.html',v.html\\);console.log\\('written'\\);}\\)\")",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\(JSON.stringify\\(p.scripts||{},null,2\\)\\)\")"
     ]
   }
 }

@@ -22,6 +22,7 @@ import {
 } from "../utils/courseProgress.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { requireActive } from "../middleware/requirePlan.js";
+import { requireRole } from "../middleware/requireRole.js";
 import logger from "../utils/logger.js";
 
 const router = Router();
@@ -176,8 +177,11 @@ router.delete(
 // ===========================================
 
 // --- POST /knowledge ---
+// KnowledgeDoc is global, shared RAG content with no per-user owner, so
+// mutations are restricted to admins. Reads stay open to any active user.
 router.post(
   "/knowledge",
+  requireRole("admin"),
   asyncHandler(async (req, res) => {
     const {
       subject,
@@ -213,6 +217,7 @@ router.post(
 // --- POST /knowledge/bulk ---
 router.post(
   "/knowledge/bulk",
+  requireRole("admin"),
   asyncHandler(async (req, res) => {
     const { docs } = req.body || {};
 
@@ -274,6 +279,7 @@ router.get(
 // --- DELETE /knowledge/:docId ---
 router.delete(
   "/knowledge/:docId",
+  requireRole("admin"),
   asyncHandler(async (req, res) => {
     const result = await KnowledgeDoc.deleteOne({
       docId: req.params.docId,

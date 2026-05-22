@@ -32,6 +32,11 @@ import logger from "../utils/logger.js";
 
 const router = Router();
 
+// Lectures + jobs are per-user; identity comes from the access token.
+// Every endpoint below requires an active session and is scoped to the
+// caller (ownership is enforced via the parent course / job.userId).
+router.use(authenticate, requireActive);
+
 // ===========================================
 // Background Job Processor
 // Runs async — does not block the HTTP response.
@@ -190,8 +195,6 @@ async function processLectureJob(jobId, params) {
 // --- POST /lectures/generate ---
 router.post(
   "/generate",
-  authenticate,
-  requireActive,
   asyncHandler(async (req, res) => {
     const {
       courseId,
@@ -276,7 +279,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const job = await Job.findOne({ jobId: req.params.jobId }).lean();
 
-    if (!job) {
+    if (!job || job.userId !== req.user.userId) {
       throw new NotFoundError("Job not found");
     }
 
@@ -307,13 +310,13 @@ router.get(
 router.get(
   "/",
   asyncHandler(async (req, res) => {
-    const { courseId, userId } = req.query;
+    const { courseId } = req.query;
     const page = Math.max(Number(req.query.page) || 1, 1);
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
 
-    const filter = {};
+    // Always scope to the caller; never trust a client-supplied userId.
+    const filter = { userId: req.user.userId };
     if (courseId) filter.courseId = courseId;
-    if (userId) filter.userId = userId;
 
     const skip = (page - 1) * limit;
 
@@ -343,11 +346,11 @@ router.get(
 router.get(
   "/jobs/list",
   asyncHandler(async (req, res) => {
-    const { status, userId } = req.query;
+    const { status } = req.query;
     const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
-    const filter = { type: "lecture" };
+    // Always scope to the caller; never trust a client-supplied userId.
+    const filter = { type: "lecture", userId: req.user.userId };
     if (status) filter.status = status;
-    if (userId) filter.userId = userId;
 
     const jobs = await Job.find(filter)
       .sort({ createdAt: -1 })
@@ -371,6 +374,7 @@ router.post(
     const result = await Job.updateMany(
       {
         type: "lecture",
+        userId: req.user.userId,
         status: { $in: ["pending", "running"] },
         createdAt: { $lt: cutoff },
       },
@@ -395,7 +399,10 @@ router.post(
 router.delete(
   "/jobs/:jobId",
   asyncHandler(async (req, res) => {
-    const result = await Job.deleteOne({ jobId: req.params.jobId });
+    const result = await Job.deleteOne({
+      jobId: req.params.jobId,
+      userId: req.user.userId,
+    });
     if (result.deletedCount === 0) {
       throw new NotFoundError("Job not found");
     }
@@ -408,8 +415,6 @@ router.delete(
 // to { lastBlockIndex: -1, completed: false } if no progress exists.
 router.get(
   "/:lectureId/progress",
-  authenticate,
-  requireActive,
   asyncHandler(async (req, res) => {
     const { lectureId } = req.params;
     const userId = req.user.userId;
@@ -433,8 +438,6 @@ router.get(
 // button and other client-initiated saves.
 router.post(
   "/:lectureId/progress",
-  authenticate,
-  requireActive,
   asyncHandler(async (req, res) => {
     const { lectureId } = req.params;
     const userId = req.user.userId;
@@ -473,6 +476,15 @@ router.get(
       throw new NotFoundError("Lecture not found");
     }
 
+    // Authoritative ownership check: the lecture's parent course must
+    // belong to the caller.
+    const course = await Course.findOne({ courseId: lecture.courseId })
+      .select("userId -_id")
+      .lean();
+    if (!course || course.userId !== req.user.userId) {
+      throw new NotFoundError("Lecture not found");
+    }
+
     res.json({ lecture });
   })
 );
@@ -481,13 +493,25 @@ router.get(
 router.delete(
   "/:lectureId",
   asyncHandler(async (req, res) => {
-    const result = await Lecture.deleteOne({
+    const lecture = await Lecture.findOne({
       lectureId: req.params.lectureId,
-    });
+    })
+      .select("courseId -_id")
+      .lean();
 
-    if (result.deletedCount === 0) {
+    if (!lecture) {
       throw new NotFoundError("Lecture not found");
     }
+
+    // Authoritative ownership check via the parent course.
+    const course = await Course.findOne({ courseId: lecture.courseId })
+      .select("userId -_id")
+      .lean();
+    if (!course || course.userId !== req.user.userId) {
+      throw new NotFoundError("Lecture not found");
+    }
+
+    await Lecture.deleteOne({ lectureId: req.params.lectureId });
 
     res.json({ message: "Lecture deleted", lectureId: req.params.lectureId });
   })
