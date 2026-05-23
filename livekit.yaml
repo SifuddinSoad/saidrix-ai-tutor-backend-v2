@@ -1,21 +1,10 @@
-# ===========================================
-# LiveKit Server Configuration
-# Keys here MUST match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env
-# ===========================================
-
 port: 7880
-
 rtc:
   tcp_port: 7881
   udp_port: 7882
-  use_external_ip: false
-
+  use_external_ip: true # ← MUST be true (clients need server's public IP for media)
 redis:
   address: redis:6379
-
-# API_KEY: API_SECRET
-# (secret must be >= 32 chars for production; dev value below is fine for local)
 keys:
-  devkey: devsecret_change_in_production_min_32_chars_xxxx
-
+  APIffnz3Mxw8PXb: PPgOYVw5xbTZhfoXdVUzDEzGr7kPHyQGB8QIser0k0H # ← generate new, do NOT use devkey
 log_level: info

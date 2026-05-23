@@ -1,24 +1,27 @@
-# ===========================================
-# LiveKit Self-Host Stack
-# Run: docker compose up -d
-# ===========================================
-
 services:
   livekit:
     image: livekit/livekit-server:latest
     command: --config /etc/livekit.yaml
     restart: unless-stopped
-    ports:
-      - "7880:7880"        # HTTP/WebSocket signaling
-      - "7881:7881"        # TCP fallback
-      - "7882:7882/udp"    # WebRTC media (UDP)
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml
-    depends_on:
-      - redis
+    ports:
+      - "7881:7881"
+      - "7882:7882/udp"
+    networks: [dokploy-network]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.livekit.rule=Host(`livekit.yourdomain.com`)
+      - traefik.http.routers.livekit.entrypoints=websecure
+      - traefik.http.routers.livekit.tls.certresolver=letsencrypt
+      - traefik.http.services.livekit.loadbalancer.server.port=7880
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    networks: [dokploy-network]
+    # no host port publish — only livekit talks to it internally
+
+networks:
+  dokploy-network:
+    external: true
