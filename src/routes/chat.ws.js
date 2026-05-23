@@ -9,6 +9,7 @@ import { randomUUID } from "crypto";
 import { invokeChatAgent } from "../agents/chat/graph.js";
 import Session from "../db/models/Session.js";
 import { verifyAccessToken } from "../services/token.service.js";
+import { resolveAccountStatus, isActiveStatus } from "../utils/accountStatus.js";
 import logger from "../utils/logger.js";
 
 // --- Active Connections Registry ---
@@ -59,21 +60,27 @@ export function setupChatWebSocket(server) {
 
   // --- Handle New Connections ---
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", async (ws, req) => {
     let currentSessionId = null;
 
-    // --- Authenticate the socket ---
+    // --- Authenticate + authorize the socket ---
     // Browsers can't set headers on a WS handshake, so the SPA passes the
     // short-lived access token as a query param. Reject unauthenticated
-    // sockets immediately (1008 = policy violation).
+    // sockets immediately (1008 = policy violation). We also verify the
+    // account is still active (live DB check + lazy trial expiry) so an
+    // expired/lapsed user can't keep chatting on a stale token.
     try {
       const url = new URL(req.url, "http://localhost");
       const token = url.searchParams.get("token");
       if (!token) throw new Error("missing token");
       const payload = verifyAccessToken(token);
+      const acct = await resolveAccountStatus(payload.sub);
+      if (!acct || !isActiveStatus(acct.status)) {
+        throw new Error("inactive account");
+      }
       ws.userId = payload.sub;
     } catch {
-      logger.warn("[WebSocket] Rejected unauthenticated connection");
+      logger.warn("[WebSocket] Rejected unauthorized connection");
       sendJSON(ws, { type: "error", error: "Unauthorized" });
       try {
         ws.close(1008, "Unauthorized");

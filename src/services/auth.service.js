@@ -320,12 +320,20 @@ export async function login({ email, password: pw, ctx }) {
   }
 
   // Block login until signup is complete; tell the client the next step.
+  // The password already matched here, so the user has proven identity — we
+  // hand back a scoped signup token (when the email is verified) so the client
+  // can resume the protected steps (set-password / select-plan) without
+  // having to re-verify their email.
   if (["pending_verification", "pending_password", "pending_plan"].includes(
     user.status
   )) {
+    const details = { nextStep: user.status };
+    if (user.emailVerified) {
+      details.signupToken = signSignupToken(user);
+    }
     throw new ForbiddenError("Signup is not complete", {
       code: "SIGNUP_INCOMPLETE",
-      details: { nextStep: user.status },
+      details,
     });
   }
 
