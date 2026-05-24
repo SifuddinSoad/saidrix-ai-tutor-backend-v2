@@ -13,7 +13,13 @@ import LectureCompletion from "../db/models/LectureCompletion.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { requireActive } from "../middleware/requirePlan.js";
 import { asyncHandler } from "../errors/index.js";
-import { countTopics, progressPercent, courseTag } from "../utils/courseProgress.js";
+import {
+  countTopics,
+  progressPercent,
+  courseTag,
+  effectiveProjectStatus,
+  projectUnlockLabel,
+} from "../utils/courseProgress.js";
 
 const router = Router();
 router.use(authenticate, requireActive);
@@ -31,30 +37,35 @@ router.get(
   asyncHandler(async (req, res) => {
     const userId = req.user.userId;
 
-    const [user, courses, projects] = await Promise.all([
+    const [user, courses, projects, completions] = await Promise.all([
       User.findOne({ userId }).lean(),
       Course.find({ userId }).sort({ createdAt: -1 }).lean(),
       Project.find({ userId }).sort({ createdAt: -1 }).lean(),
+      LectureCompletion.find({ userId }).select("courseId location").lean(),
     ]);
 
+    // Group the user's completed topic-locations by course (one pass).
+    const completionsByCourse = new Map();
+    for (const cmp of completions) {
+      const arr = completionsByCourse.get(cmp.courseId) || [];
+      arr.push(cmp.location);
+      completionsByCourse.set(cmp.courseId, arr);
+    }
+    const courseById = new Map(courses.map((c) => [c.courseId, c]));
+
     // Per-course progress from completion counts.
-    const learningPath = await Promise.all(
-      courses.map(async (c) => {
-        const totalTopics = countTopics(c);
-        const completed = await LectureCompletion.countDocuments({
-          userId,
-          courseId: c.courseId,
-        });
-        return {
-          courseId: c.courseId,
-          title: c.course_title,
-          tag: courseTag(c.course_title),
-          progress: progressPercent(completed, totalTopics),
-          lessons: totalTopics,
-          locked: false,
-        };
-      })
-    );
+    const learningPath = courses.map((c) => {
+      const totalTopics = countTopics(c);
+      const completed = (completionsByCourse.get(c.courseId) || []).length;
+      return {
+        courseId: c.courseId,
+        title: c.course_title,
+        tag: courseTag(c.course_title),
+        progress: progressPercent(completed, totalTopics),
+        lessons: totalTopics,
+        locked: false,
+      };
+    });
 
     const coursesDone = learningPath.filter((c) => c.progress === 100).length;
     const coursesInProgress = learningPath.filter(
@@ -78,13 +89,26 @@ router.get(
         projectsCompleted,
       },
       learningPath,
-      projects: projects.map((p) => ({
-        projectId: p.projectId,
-        title: p.project_name,
-        desc: p.description,
-        stack: p.skills_practiced || [],
-        status: PROJECT_STATUS_UI[p.status] || "INCOMPLETE",
-      })),
+      projects: projects.map((p) => {
+        // Lock/unlock is computed live from lesson progress so projects
+        // open up as the course is learned; a stored "completed" wins.
+        const course = courseById.get(p.courseId);
+        const status = effectiveProjectStatus(
+          p,
+          course,
+          completionsByCourse.get(p.courseId) || []
+        );
+        return {
+          projectId: p.projectId,
+          title: p.project_name,
+          desc: p.description,
+          stack: p.skills_practiced || [],
+          status: PROJECT_STATUS_UI[status] || "INCOMPLETE",
+          // What the learner must finish to unlock (locked cards only).
+          unlockHint:
+            status === "locked" ? projectUnlockLabel(course, p.unlock) : null,
+        };
+      }),
     });
   })
 );

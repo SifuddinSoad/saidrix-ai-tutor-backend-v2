@@ -3,6 +3,8 @@
 // System prompt for the lecture generation agent
 // ===========================================
 
+import { languageDirective } from "../../utils/languageDirective.js";
+
 // --- Main System Prompt ---
 
 export const LECTURE_MAKER_SYSTEM_PROMPT = `You are an expert educator and instructional designer. Your job is to take a single course topic (with a teaching instruction) and produce a comprehensive, engaging, multi-modal lecture.
@@ -102,7 +104,7 @@ Use your tools (rag_search, web_search) to gather solid background material cove
  * Stage 2: structured-output prompt — sent to a JSON-grammar-bound LLM
  * that produces the final lecture blocks matching the Zod schema.
  */
-export function buildFinalPrompt({ course, location, topic, researchContext }) {
+export function buildFinalPrompt({ course, location, topic, researchContext, language }) {
   const chapter   = course.chapters?.[location.chapter_index] || {};
   const module    = chapter.modules?.[location.module_index] || {};
   const subModule = module.sub_modules?.[location.sub_module_index] || {};
@@ -124,7 +126,7 @@ The bulleted items above are a coverage checklist: EVERY bullet MUST be explaine
 **Research Findings**:
 ${researchContext}
 
-Generate the lecture as a rich array of typed blocks. Mix headings, text, code, SVG diagrams, image placeholders, lists, tables, callouts as appropriate. Make it engaging and pedagogically sound, covering every checklist bullet. Aim for a thorough lecture (15–45 minutes of study time).`;
+Generate the lecture as a rich array of typed blocks. Mix headings, text, code, SVG diagrams, image placeholders, lists, tables, callouts as appropriate. Make it engaging and pedagogically sound, covering every checklist bullet. Aim for a thorough lecture (15–45 minutes of study time).${languageDirective(language)}`;
 }
 
 export default {

@@ -78,6 +78,11 @@ const lectureSchema = new Schema(
     summary: { type: String, default: "" },
     estimated_duration_minutes: { type: Number, default: 0 },
 
+    // Language this lecture is written in (inherited from the course at
+    // generation time). Read by the voice explainer so spoken explanations
+    // match the lecture. Defaults to English for older lectures.
+    language: { type: String, default: "English", trim: true },
+
     // The lecture content — array of typed blocks
     blocks: {
       type: [blockSchema],

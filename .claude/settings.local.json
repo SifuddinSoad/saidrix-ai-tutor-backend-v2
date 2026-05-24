@@ -210,7 +210,14 @@
       "Bash(node --check src/utils/accountStatus.js)",
       "Bash(node --check src/middleware/requirePlan.js)",
       "Bash(node --check src/routes/chat.ws.js)",
-      "Bash(node --check src/services/auth.service.js)"
+      "Bash(node --check src/services/auth.service.js)",
+      "Bash(node --test tests/course-progress/projectUnlock.test.js)",
+      "Bash(node --check src/routes/dashboard.routes.js)",
+      "Bash(node --check src/routes/project.routes.js)",
+      "Bash(node --check src/utils/courseProgress.js)",
+      "Bash(node --check src/services/projectAccess.service.js)",
+      "Bash(node --test tests/utils/languageDirective.test.js)",
+      "Bash(node --test tests/utils/detectLanguage.test.js)"
     ]
   }
 }

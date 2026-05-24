@@ -259,6 +259,7 @@ export async function invokeProjectMaker(input) {
         unlock: {
           chapter_index: p.unlock_criteria?.chapter_index ?? 0,
           module_index: p.unlock_criteria?.module_index ?? 0,
+          sub_module_index: p.unlock_criteria?.sub_module_index ?? 0,
           topic_indices: p.unlock_criteria?.topic_indices || [],
           description: p.unlock_criteria?.description || "",
         },

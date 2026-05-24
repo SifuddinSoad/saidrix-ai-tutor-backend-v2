@@ -3,6 +3,8 @@
 // System prompt for the course generation agent
 // ===========================================
 
+import { languageDirective } from "../../utils/languageDirective.js";
+
 // --- Main System Prompt ---
 
 export const COURSE_MAKER_SYSTEM_PROMPT = `You are an expert course designer and curriculum architect. Your job is to design comprehensive, well-structured learning courses with a clear hierarchical breakdown that a later LLM can turn into actual lectures.
@@ -105,6 +107,7 @@ export function buildFinalPrompt({
   goals,
   duration,
   preferences,
+  language,
   researchContext,
 }) {
   return `Based on the research below, generate a complete, well-structured course matching the required schema.
@@ -118,7 +121,7 @@ export function buildFinalPrompt({
 **Research Findings**:
 ${researchContext}
 
-Generate the course now. Include real URLs from the research where possible. Make modules progressive and lessons substantive.`;
+Generate the course now. Include real URLs from the research where possible. Make modules progressive and lessons substantive.${languageDirective(language)}`;
 }
 
 export default {

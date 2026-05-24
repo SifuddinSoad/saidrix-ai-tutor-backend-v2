@@ -14,13 +14,20 @@ import { randomUUID } from "crypto";
 import Course from "../db/models/Course.js";
 import Project from "../db/models/Project.js";
 import Job from "../db/models/Job.js";
+import LectureCompletion from "../db/models/LectureCompletion.js";
+import {
+  effectiveProjectStatus,
+  projectUnlockLabel,
+} from "../utils/courseProgress.js";
 import { processProjectJob } from "../agents/project-maker/job.js";
 import {
   asyncHandler,
   BadRequestError,
+  ForbiddenError,
   NotFoundError,
 } from "../errors/index.js";
 import { completeProject } from "../services/progress.service.js";
+import { assertProjectUnlocked } from "../services/projectAccess.service.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { requireActive } from "../middleware/requirePlan.js";
 import { checkUsageLimit } from "../middleware/checkUsageLimit.js";
@@ -135,8 +142,43 @@ router.get(
       Project.countDocuments(filter),
     ]);
 
+    // Overlay live lock/unlock from lesson progress. Batch the course +
+    // completion lookups across the page (group by courseId) so we don't
+    // issue a query per project.
+    const courseIds = [...new Set(projects.map((p) => p.courseId))];
+    const [courseDocs, completionDocs] = await Promise.all([
+      Course.find({ courseId: { $in: courseIds } }).lean(),
+      LectureCompletion.find({
+        userId: req.user.userId,
+        courseId: { $in: courseIds },
+      })
+        .select("courseId location")
+        .lean(),
+    ]);
+    const courseById = new Map(courseDocs.map((c) => [c.courseId, c]));
+    const completionsByCourse = new Map();
+    for (const cmp of completionDocs) {
+      const arr = completionsByCourse.get(cmp.courseId) || [];
+      arr.push(cmp.location);
+      completionsByCourse.set(cmp.courseId, arr);
+    }
+    const withStatus = projects.map((p) => {
+      const course = courseById.get(p.courseId);
+      const status = effectiveProjectStatus(
+        p,
+        course,
+        completionsByCourse.get(p.courseId) || []
+      );
+      return {
+        ...p,
+        status,
+        unlockHint:
+          status === "locked" ? projectUnlockLabel(course, p.unlock) : null,
+      };
+    });
+
     res.json({
-      projects,
+      projects: withStatus,
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   })
@@ -154,7 +196,11 @@ router.get(
       throw new NotFoundError("Project not found");
     }
 
-    res.json({ project });
+    // Hard gate: a project still locked by lesson progress can't be
+    // opened directly (mirrors lecture/voice 403 enforcement).
+    const status = await assertProjectUnlocked(project, req.user.userId);
+
+    res.json({ project: { ...project, status } });
   })
 );
 
@@ -170,6 +216,11 @@ router.patch(
 
     if (!project || project.userId !== req.user.userId) {
       throw new NotFoundError("Project not found");
+    }
+
+    // Can't complete a project the learner hasn't unlocked yet.
+    if (project.status !== "completed") {
+      await assertProjectUnlocked(project, req.user.userId);
     }
 
     const wasAlreadyCompleted = project.status === "completed";

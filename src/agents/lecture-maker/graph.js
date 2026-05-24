@@ -240,6 +240,7 @@ export async function invokeLectureMaker(input) {
       location,
       topic,
       researchContext: extractResearchContext(researchMessages),
+      language: course.language || "English",
     });
 
     const timeoutMs =
@@ -286,6 +287,7 @@ export async function invokeLectureMaker(input) {
         title: lectureData.title,
         summary: lectureData.summary,
         estimated_duration_minutes: lectureData.estimated_duration_minutes,
+        language: course.language || "English",
         blocks: lectureData.blocks,
         sources: lectureData.sources,
         userId,

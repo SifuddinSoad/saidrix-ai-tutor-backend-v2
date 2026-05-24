@@ -8,6 +8,7 @@
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { createLLM } from "../../../utils/llm.js";
 import { EXPLAINER_PROMPTS } from "../prompts.js";
+import { languageDirective } from "../../../utils/languageDirective.js";
 import logger from "../../../utils/logger.js";
 
 function explainerModel() {

@@ -26,6 +26,7 @@ import {
   BadRequestError,
   NotFoundError,
 } from "../errors/index.js";
+import { assertProjectUnlocked } from "../services/projectAccess.service.js";
 import logger from "../utils/logger.js";
 
 // Two routers — one nested under /api/projects/:projectId/reviews,
@@ -93,6 +94,8 @@ nestedRouter.post(
     }
 
     const project = await loadOwnedProject(projectId, userId);
+    // Block submitting work against a project still locked by lesson progress.
+    await assertProjectUnlocked(project, userId);
 
     const review = await createJobAndReview({
       project,
@@ -128,6 +131,8 @@ nestedRouter.post(
     }
 
     const project = await loadOwnedProject(projectId, userId);
+    // Block submitting work against a project still locked by lesson progress.
+    await assertProjectUnlocked(project, userId);
 
     const key = `reviews/${userId}/${projectId}/${randomUUID()}.zip`;
     await uploadBuffer(key, req.file.buffer, "application/zip");
@@ -186,6 +191,8 @@ nestedRouter.post(
     }
 
     const project = await loadOwnedProject(projectId, userId);
+    // Block submitting work against a project still locked by lesson progress.
+    await assertProjectUnlocked(project, userId);
 
     // Build a zip in memory so the rest of the pipeline (R2 → job →
     // unzip → walk) stays identical to the legacy ZIP flow.

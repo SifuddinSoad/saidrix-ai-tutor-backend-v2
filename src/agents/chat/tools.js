@@ -211,6 +211,12 @@ export const createCourseTool = tool(
         .string()
         .optional()
         .describe("Learning preferences (videos vs reading, project-based, etc.)"),
+      language: z
+        .string()
+        .optional()
+        .describe(
+          "The language the user is writing/speaking in — set this so the course, its lectures, and the voice tutor are all generated in that language (e.g. 'Bengali', 'English', 'Banglish'). Defaults to English if omitted."
+        ),
       sessionId: z
         .string()
         .optional()

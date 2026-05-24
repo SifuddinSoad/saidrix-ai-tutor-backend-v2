@@ -68,6 +68,12 @@ const courseSchema = new Schema(
     course_description: { type: String, default: "" },
     chapters: { type: [chapterSchema], default: [] },
 
+    // Auto-detected language of the originating chat (e.g. "Bengali",
+    // "English", "Banglish"). Drives the language of generated lectures,
+    // spoken explanations, and projects. Defaults to English so existing
+    // courses keep their current behavior.
+    language: { type: String, default: "English", trim: true },
+
     // DB infrastructure (not part of the LLM output)
     sessionId: { type: String, index: true },
     userId: { type: String, default: "default", index: true },

@@ -92,6 +92,7 @@ export async function invokeCourseMaker(input) {
     goals = "",
     duration = "",
     preferences = "",
+    language = "English",
     sessionId = null,
     userId = null,
   } = input;
@@ -128,6 +129,7 @@ export async function invokeCourseMaker(input) {
       goals,
       duration,
       preferences,
+      language,
       researchContext: extractResearchContext(researchMessages),
     });
 
@@ -161,6 +163,7 @@ export async function invokeCourseMaker(input) {
       course_title: courseData.course_title,
       course_description: courseData.course_description,
       chapters: courseData.chapters,
+      language,
       sessionId,
       userId,
     });

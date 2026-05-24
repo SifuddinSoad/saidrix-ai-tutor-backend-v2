@@ -15,6 +15,7 @@ import { sessionCache } from "./memory.js";
 import { extractAskBlocks } from "./extractAsk.js";
 import { extractCourseRefs } from "./extractCourse.js";
 import { extractProposal } from "./extractProposal.js";
+import { detectLanguage } from "../../utils/detectLanguage.js";
 import ToolCallLog from "../../db/models/ToolCallLog.js";
 import logger from "../../utils/logger.js";
 
@@ -248,6 +249,21 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
         logger.warn(`[Agent] ToolCallLog start write failed: ${err.message}`),
       );
 
+      // Auto-detect the learner's language from their natural-language
+      // messages this session — the [CreateCourse] command is
+      // language-neutral, so infer it from the surrounding conversation.
+      let language = "English";
+      try {
+        const hist = await sessionCache.get(sessionId);
+        const userText = (hist || [])
+          .filter((m) => m?._getType?.() === "human")
+          .map((m) => (typeof m.content === "string" ? m.content : ""))
+          .filter((t) => t && !/^\s*\[(CreateCourse|CreateProject|CreateRoutine)\]/.test(t))
+          .slice(-6)
+          .join("\n");
+        language = detectLanguage(userText);
+      } catch { /* default English */ }
+
       let summary = "";
       let courseRefs = [];
       let toolOutput = "";
@@ -258,6 +274,7 @@ export async function* invokeChatAgent(sessionId, userMessage, options = {}) {
           level: cmd.level,
           goals: cmd.goals,
           duration: cmd.duration,
+          language,
           sessionId,
           userId,
         });

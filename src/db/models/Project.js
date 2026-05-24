@@ -22,6 +22,7 @@ const unlockSchema = new Schema(
   {
     chapter_index: { type: Number, default: 0 },
     module_index: { type: Number, default: 0 },
+    sub_module_index: { type: Number, default: 0 },
     topic_indices: { type: [Number], default: [] },
     description: { type: String, default: "" },
   },

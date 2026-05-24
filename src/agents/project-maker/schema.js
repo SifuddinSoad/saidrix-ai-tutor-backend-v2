@@ -27,6 +27,15 @@ const unlockCriteriaSchema = z.object({
     .describe(
       "0-based index of the last module (within that chapter) the project needs"
     ),
+  sub_module_index: z
+    .number()
+    .int()
+    .min(0)
+    .describe(
+      "0-based index of the last sub_module (within that module) the project " +
+        "needs. The project unlocks once every topic up to and including this " +
+        "sub_module is completed."
+    ),
   topic_indices: z
     .array(z.number().int().min(0))
     .describe(
